@@ -20,3 +20,6 @@ Package.resolved.lock
 *.p12
 *.provisionprofile
 sparkle_private_key*
+
+# Per-agent SPM scratch dirs
+.build*/
