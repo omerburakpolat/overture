@@ -1,0 +1,23 @@
+Overture — NOTICE
+
+The Overture source code is licensed under the MIT License (see LICENSE).
+
+The following are explicitly EXCLUDED from the MIT license grant:
+
+- The Overture name and app icon.
+- Any third-party trademarks, wordmarks, or logos that may appear in the
+  interface or documentation, including the GitHub mark (GitHub, Inc.),
+  the Vercel mark (Vercel, Inc.), and Claude / Claude Code marks
+  (Anthropic, PBC). These identify third-party services Overture
+  integrates with, remain the property of their respective owners, and
+  are used only to refer to those services. Where brand usage guidelines
+  do not permit redistribution of a mark, Overture uses text labels
+  instead.
+
+Overture is an independent open-source project. It is not affiliated
+with, endorsed by, or sponsored by Anthropic, GitHub, or Vercel.
+
+Overture drives the user's own locally installed Claude Code CLI using
+the user's own existing authentication. It does not bundle, redistribute,
+or proxy Claude Code, and it never handles or transmits the user's
+credentials itself.
