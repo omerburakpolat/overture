@@ -85,6 +85,11 @@ public enum OvertureSchemaV1: VersionedSchema {
         /// Worktree mode only; beyond this cap cards queue (spec 04 §7.4).
         public var maxParallelAgents: Int
 
+        /// Per-project trust gate (resolution #12): `-p` skips workspace
+        /// trust and runs the project's own hooks/MCP servers — nil means
+        /// Overture has never been allowed to spawn here.
+        public var trustedAt: Date?
+
         @Relationship(deleteRule: .cascade, inverse: \Card.project)
         public var cards: [Card]
         /// Tags are per-project (resolution #17).

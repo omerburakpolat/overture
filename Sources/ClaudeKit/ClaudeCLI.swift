@@ -19,7 +19,7 @@ public enum ClaudeCLI {
         /// critical deletes — which STILL surface. Opt-in per card.
         case fullAuto
 
-        var modeFlag: String {
+        public var modeFlag: String {
             switch self {
             case .askMe: "default"      // "manual" is the CLI alias; init reports "default"
             case .plan: "plan"
