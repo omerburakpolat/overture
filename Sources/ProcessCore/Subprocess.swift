@@ -60,6 +60,7 @@ public actor Subprocess {
 
     private var lineContinuation: AsyncStream<String>.Continuation?
     private var exitContinuations: [CheckedContinuation<SubprocessExit, Never>] = []
+    private var timedExitContinuations: [UUID: CheckedContinuation<SubprocessExit?, Never>] = [:]
     private var exitResult: SubprocessExit?
     private var stdoutReader: PipeLineReader?
     private var stderrReader: PipeLineReader?
@@ -166,19 +167,24 @@ public actor Subprocess {
         return await withCheckedContinuation { exitContinuations.append($0) }
     }
 
-    /// Suspends until the child exits or the timeout elapses.
+    /// Suspends until the child exits or the timeout elapses (returns nil).
+    /// NOTE: not a task group — a group would await its never-completing
+    /// wait child at scope exit and deadlock until the process dies.
     public func waitForExit(upTo timeout: Duration) async -> SubprocessExit? {
         if let exitResult { return exitResult }
-        return await withTaskGroup(of: SubprocessExit?.self) { group in
-            group.addTask { await self.waitForExit() }
-            group.addTask {
+        let token = UUID()
+        return await withCheckedContinuation { continuation in
+            timedExitContinuations[token] = continuation
+            Task { [weak self] in
                 try? await Task.sleep(for: timeout)
-                return nil
+                await self?.expireTimedWait(token: token)
             }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
         }
+    }
+
+    private func expireTimedWait(token: UUID) {
+        timedExitContinuations.removeValue(forKey: token)?
+            .resume(returning: nil)
     }
 
     /// Last lines of stderr, for diagnostics on failure.
@@ -208,5 +214,9 @@ public actor Subprocess {
             continuation.resume(returning: exit)
         }
         exitContinuations.removeAll()
+        for (_, continuation) in timedExitContinuations {
+            continuation.resume(returning: exit)
+        }
+        timedExitContinuations.removeAll()
     }
 }
