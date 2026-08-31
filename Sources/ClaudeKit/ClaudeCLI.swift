@@ -48,6 +48,10 @@ public enum ClaudeCLI {
         public var tools: String?
         /// Empty string = ignore user/project settings (utility calls).
         public var settingSources: String?
+        /// Skip every MCP server not explicitly configured — with none
+        /// configured, no MCP at all. Product sessions leave this off
+        /// (spec 01 §6); minimal-env/debug runs turn it on.
+        public var strictMCPConfig: Bool
 
         public init(sessionID: UUID = UUID(),
                     resume: Bool = false,
@@ -60,7 +64,8 @@ public enum ClaudeCLI {
                     maxBudgetUSD: Double? = nil,
                     fallbackModel: String? = nil,
                     tools: String? = nil,
-                    settingSources: String? = nil) {
+                    settingSources: String? = nil,
+                    strictMCPConfig: Bool = false) {
             self.sessionID = sessionID
             self.resume = resume
             self.fork = fork
@@ -73,6 +78,7 @@ public enum ClaudeCLI {
             self.fallbackModel = fallbackModel
             self.tools = tools
             self.settingSources = settingSources
+            self.strictMCPConfig = strictMCPConfig
         }
     }
 
@@ -113,6 +119,9 @@ public enum ClaudeCLI {
         if let tools = spec.tools { args += ["--tools", tools] }
         if let sources = spec.settingSources {
             args += ["--setting-sources", sources]
+        }
+        if spec.strictMCPConfig {
+            args.append("--strict-mcp-config")
         }
         return args
     }

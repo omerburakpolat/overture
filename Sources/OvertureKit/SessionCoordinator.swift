@@ -123,15 +123,20 @@ public final class SessionCoordinator {
         }
     }
 
+    /// Marks the plan a turn ended with (no ExitPlanMode call to answer).
+    public static let syntheticPlanID = "synthetic-plan"
+
     /// Plan approval: allow ExitPlanMode, flip mode, move the card.
     public func approvePlan(card: Card) async {
         guard let approval = live[card.id]?.planApproval,
               let supervisor = await services.processManager
                   .supervisor(for: card.id) else { return }
-        let pending = await supervisor.pendingPermissionRequests[approval.id]
-        try? await supervisor.answerPermission(
-            requestID: approval.id,
-            verdict: .allow(updatedInput: pending?.input ?? .null))
+        if approval.id != Self.syntheticPlanID {
+            let pending = await supervisor.pendingPermissionRequests[approval.id]
+            try? await supervisor.answerPermission(
+                requestID: approval.id,
+                verdict: .allow(updatedInput: pending?.input ?? .null))
+        }
         live[card.id]?.planApproval = nil
         if let effects = try? BoardEngine.apply(.approvePlan, to: card,
                                                 in: context) {
@@ -202,13 +207,19 @@ public final class SessionCoordinator {
         // Resume the primary session when one exists; mint otherwise.
         let existing = card.sessions.first { $0.role == .primary }
         let sessionID = existing?.sessionID ?? UUID()
+        // Debug/test knob: a clean claude environment (no user settings,
+        // no MCP) — product sessions load everything (spec 01 §6).
+        let minimalEnv = ProcessInfo.processInfo
+            .environment["OVERTURE_MINIMAL_CLAUDE_ENV"] == "1"
         let spec = ClaudeCLI.SessionSpec(
             sessionID: sessionID,
             resume: existing != nil,
             profile: profile,
             model: card.model,
             effort: card.effort,
-            maxBudgetUSD: project.runBudgetUSD > 0 ? project.runBudgetUSD : nil)
+            maxBudgetUSD: project.runBudgetUSD > 0 ? project.runBudgetUSD : nil,
+            settingSources: minimalEnv ? "" : nil,
+            strictMCPConfig: minimalEnv)
 
         do {
             let stream = try await services.processManager.start(
@@ -303,6 +314,19 @@ public final class SessionCoordinator {
                 card.lastAssistantSummary = String(text.prefix(200))
             }
             card.lastActivityAt = .now
+            if runKind == .planning, !result.isError,
+               live[cardID]?.planApproval == nil, card.column == .plan {
+                // The model presented its plan as text without calling
+                // ExitPlanMode (models do this) — the final message IS the
+                // plan; approval then just flips the session into build.
+                live[cardID, default: .init()].planApproval =
+                    PendingPermission(id: Self.syntheticPlanID,
+                                      toolName: "ExitPlanMode",
+                                      displayInput: "",
+                                      planText: result.resultText,
+                                      suggestionsAvailable: false)
+                try? BoardEngine.apply(.planReady, to: card, in: context)
+            }
             if let effects = try? BoardEngine.apply(
                 .runEnded(success: !result.isError,
                           runKind: AgentRunKind(runKind)),
@@ -431,7 +455,10 @@ public final class SessionCoordinator {
     static func planPrompt(for card: Card) -> String {
         """
         Plan the implementation of this ticket. Identify acceptance criteria \
-        before designing. Keep the plan reviewable.
+        before designing. Keep the plan reviewable. Prefer deciding over \
+        asking — make reasonable assumptions and note them in the plan; only \
+        ask a question when genuinely blocked. When the plan is complete, \
+        exit plan mode to present it for approval.
 
         ## Ticket
         \(ticketText(card))
@@ -449,6 +476,15 @@ public final class SessionCoordinator {
     }
 
     static func excerpt(_ request: PermissionRequest) -> String {
+        if request.isAskUserQuestion {
+            // Render the actual questions; M1 answers them through the
+            // banner's text field (deny-with-message steers the model).
+            let questions = (request.input["questions"]?.arrayValue ?? [])
+                .compactMap { $0["question"]?.stringValue }
+            if !questions.isEmpty {
+                return questions.joined(separator: "\n")
+            }
+        }
         if let command = request.input["command"]?.stringValue {
             return command
         }
