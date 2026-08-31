@@ -161,3 +161,25 @@ private func fixtureLines(_ name: String, direction: String = "OUT") throws -> [
         #expect(!args.contains("--bare")) // OAuth-incompatible; resolution #19
     }
 }
+
+@Suite struct InitializeInfoTests {
+    @Test func decodesRealInitializeResponse() throws {
+        // The captured initialize response from scenario A.
+        let line = try #require(try fixtureLines("a-permissions").first {
+            $0.contains("\"control_response\"")
+        })
+        guard case .controlResponse(let response) =
+            ClaudeEventDecoder.decode(line: line) else {
+            Issue.record("expected control_response")
+            return
+        }
+        let info = try #require(InitializeInfo(from: response))
+        #expect(!info.commands.isEmpty)
+        #expect(!info.models.isEmpty)
+        let first = try #require(info.models.first)
+        #expect(!first.displayName.isEmpty)
+        #expect(first.supportsEffort)
+        #expect(first.effortLevels.contains("max"))
+        #expect(info.accountEmail?.contains("@") == true)
+    }
+}
