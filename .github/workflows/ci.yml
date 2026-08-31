@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  packages:
+    name: Build & test packages
+    # macOS 26 image required (SwiftUI/Liquid Glass APIs, Swift 6.2 toolchain).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        # Live tests (OVERTURE_LIVE_TESTS) are excluded by default: CI has no
+        # claude auth. Everything else must pass.
+        run: swift test
+
+  app:
+    name: Build app
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
+      - name: Build (unsigned)
+        run: |
+          if [ -d Overture.xcodeproj ]; then
+            xcodebuild -project Overture.xcodeproj -scheme Overture \
+              -destination 'platform=macOS,arch=arm64' \
+              CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO build
+          else
+            echo "App project not created yet — skipping"
+          fi
