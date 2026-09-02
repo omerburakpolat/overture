@@ -16,6 +16,7 @@ struct CardDetailView: View {
     enum Tab: String, CaseIterable {
         case chat = "Chat"
         case diff = "Diff"
+        case tests = "Tests"
         case activity = "Activity"
     }
 
@@ -26,6 +27,7 @@ struct CardDetailView: View {
             switch tab {
             case .chat: ChatTab(card: card, store: store)
             case .diff: DiffTab(card: card)
+            case .tests: TestsTab(card: card)
             case .activity: ActivityTab(card: card)
             }
         }
@@ -541,6 +543,115 @@ struct DiffLineView: View {
         case .addition: DS.Color.Diff.addedBackground
         case .deletion: DS.Color.Diff.deletedBackground
         case .context: .clear
+        }
+    }
+}
+
+// MARK: - Tests
+
+struct TestsTab: View {
+    @Environment(AppState.self) private var appState
+    let card: Card
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if card.testRuns.isEmpty {
+                ContentUnavailableView {
+                    Label("No test runs yet", systemImage: DS.Icon.testing)
+                } description: {
+                    Text("Agent tests verify the work against the ticket's "
+                         + "acceptance criteria without fixing anything.")
+                } actions: {
+                    runButton
+                }
+            } else {
+                List(card.testRuns.sorted { $0.startedAt > $1.startedAt },
+                     id: \.id) { run in
+                    TestRunRow(run: run)
+                }
+                .scrollContentBackground(.hidden)
+                HStack {
+                    Spacer()
+                    runButton
+                }
+                .padding(DS.Space.s300)
+            }
+        }
+        .background(DS.Color.Surface.sunken)
+    }
+
+    private var runButton: some View {
+        Button("Run agent tests") {
+            Task { await appState.coordinator.startAgentTests(for: card) }
+        }
+        .disabled(card.subState.pinsCard)
+    }
+}
+
+struct TestRunRow: View {
+    let run: TestRun
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s200) {
+            HStack(spacing: DS.Space.s200) {
+                Image(systemName: icon)
+                    .foregroundStyle(tint.text)
+                Text(title)
+                    .font(DS.TypeStyle.cardTitle)
+                    .foregroundStyle(DS.Color.Text.primary)
+                Spacer()
+                Text(run.startedAt, style: .relative)
+                    .font(DS.TypeStyle.timestamp)
+                    .foregroundStyle(DS.Color.Text.tertiary)
+            }
+            if !run.summary.isEmpty {
+                Text(run.summary)
+                    .font(DS.TypeStyle.cardMeta)
+                    .foregroundStyle(DS.Color.Text.secondary)
+            }
+            ForEach(Array(run.failures.enumerated()), id: \.offset) { _, failure in
+                VStack(alignment: .leading, spacing: DS.Space.s050) {
+                    Text(failure.title)
+                        .font(DS.TypeStyle.cardMeta.weight(.medium))
+                        .foregroundStyle(DS.Status.danger.text)
+                    if !failure.detail.isEmpty {
+                        Text(failure.detail)
+                            .font(DS.TypeStyle.cardMeta)
+                            .foregroundStyle(DS.Color.Text.secondary)
+                    }
+                }
+                .padding(DS.Space.s200)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DS.Status.danger.tint, in: RoundedRectangle(
+                    cornerRadius: DS.Radius.xs))
+            }
+        }
+        .padding(.vertical, DS.Space.s100)
+    }
+
+    private var icon: String {
+        switch run.status {
+        case .running: DS.Icon.deployBuilding
+        case .passed: DS.Icon.done
+        case .failed: DS.Icon.error
+        case .aborted: DS.Icon.error
+        }
+    }
+
+    private var tint: DS.StatusColor {
+        switch run.status {
+        case .running: DS.Status.running
+        case .passed: DS.Status.success
+        case .failed, .aborted: DS.Status.danger
+        }
+    }
+
+    private var title: String {
+        switch run.status {
+        case .running: "Running…"
+        case .passed: "Passed"
+        case .failed: run.verdict == .manualPass ? "Manual pass" : "Failed"
+        case .aborted: "Aborted"
         }
     }
 }

@@ -45,6 +45,21 @@ public final class SessionCoordinator {
 
     public private(set) var live: [UUID: LiveState] = [:]
 
+    /// User-facing moments the app surfaces as system notifications
+    /// (posted only when Overture is not frontmost — the app decides).
+    public struct Notice: Sendable {
+        public enum Kind: Sendable {
+            case agentFinished, needsInput, testsFailed, agentErrored
+        }
+        public var cardID: UUID
+        public var cardTitle: String
+        public var kind: Kind
+        public var body: String
+    }
+
+    /// Set by the app target; nil in headless/test contexts.
+    public var onNotice: (@MainActor (Notice) -> Void)?
+
     private let services: AppServices
     private var pumps: [UUID: Task<Void, Never>] = [:]
 
@@ -319,6 +334,11 @@ public final class SessionCoordinator {
         appendLive(card.id, .init(
             id: UUID().uuidString, kind: .notice,
             text: "Agent tests: \(verdict.passed && !isError ? "passed" : "failed") — \(verdict.summary)"))
+        if isError || !verdict.passed {
+            onNotice?(.init(cardID: card.id, cardTitle: card.title,
+                            kind: .testsFailed,
+                            body: verdict.summary))
+        }
         let transition: CardTransition = (verdict.passed && !isError)
             ? .testsPassed(verdict: .pass) : .testsFailed
         if let effects = try? BoardEngine.apply(transition, to: card,
@@ -465,6 +485,10 @@ public final class SessionCoordinator {
                         suggestionsAvailable:
                             !(request.suggestions.arrayValue ?? []).isEmpty))
                 card.subState = .needsInput
+                onNotice?(.init(cardID: cardID, cardTitle: card.title,
+                                kind: .needsInput,
+                                body: "\(request.toolName): "
+                                    + Self.excerpt(request).prefix(80)))
             }
             try? context.save()
 
@@ -495,6 +519,15 @@ public final class SessionCoordinator {
                           runKind: AgentRunKind(runKind)),
                 to: card, in: context) {
                 Task { await self.execute(effects, for: card) }
+            }
+            if runKind == .autonomousRun {
+                onNotice?(.init(cardID: cardID, cardTitle: card.title,
+                                kind: result.isError ? .agentErrored
+                                                     : .agentFinished,
+                                body: result.isError
+                                    ? "The run failed — see the card."
+                                    : "Finished — waiting in "
+                                      + card.column.rawValue + "."))
             }
             try? context.save()
 

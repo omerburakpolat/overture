@@ -41,21 +41,43 @@ extension Column {
 
 struct BoardView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.overtureTheme) private var theme
     @State var store: BoardStore
     @State private var selectedCard: Card?
     @State private var showComposer = false
+    @Namespace private var boardSpace
+
+    /// Card→column layout identity; drives the auto-move/fly-back travel
+    /// (matched geometry animates the position change; Reduce Motion swaps
+    /// it for a plain crossfade per spec 03 §6.4).
+    private var layoutFingerprint: String {
+        store.project.cards
+            .map { "\($0.id.uuidString)#\($0.columnRaw)" }
+            .sorted().joined()
+    }
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: DS.Layout.columnGap) {
                 ForEach(Column.allCases, id: \.self) { column in
                     ColumnView(store: store, column: column,
-                               selectedCard: $selectedCard)
+                               selectedCard: $selectedCard,
+                               boardSpace: boardSpace)
                 }
             }
             .padding(DS.Layout.boardMargin)
+            .animation(theme.reduceMotion ? .easeInOut(duration: 0.2)
+                                          : DS.Motion.Spring.flight,
+                       value: layoutFingerprint)
         }
         .background(DS.Color.Surface.canvas)
+        .onChange(of: appState.pendingCardFocus) {
+            guard let focusID = appState.pendingCardFocus,
+                  let card = store.project.cards.first(
+                    where: { $0.id == focusID }) else { return }
+            selectedCard = card
+            appState.pendingCardFocus = nil
+        }
         .navigationTitle(store.project.name)
         .toolbar {
             Button {
@@ -99,6 +121,7 @@ struct ColumnView: View {
     let store: BoardStore
     let column: Column
     @Binding var selectedCard: Card?
+    let boardSpace: Namespace.ID
     @State private var isDropTarget = false
 
     var body: some View {
@@ -109,6 +132,7 @@ struct ColumnView: View {
                 LazyVStack(spacing: DS.Layout.cardGap) {
                     ForEach(cards) { card in
                         CardView(card: card)
+                            .matchedGeometryEffect(id: card.id, in: boardSpace)
                             .onTapGesture { selectedCard = card }
                             .draggable(card.id.uuidString)
                             .contextMenu { cardMenu(card) }

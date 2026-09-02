@@ -47,11 +47,15 @@ final class AppState {
     let coordinator: SessionCoordinator
     let projectsStore: ProjectsStore
     var navigationPath = NavigationPath()
+    /// Card a notification/menu-bar click wants opened (BoardView consumes).
+    var pendingCardFocus: UUID?
+    var notificationManager: NotificationManager?
 
     init() throws {
         services = try AppServices()
         coordinator = SessionCoordinator(services: services)
         projectsStore = ProjectsStore(services: services)
+        enableNotifications()
     }
 }
 
@@ -258,22 +262,49 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s200) {
-            let running = appState.coordinator.live.filter {
-                if case .working = $0.value.activity { return true }
-                if case .needsInput = $0.value.activity { return true }
-                return false
+            let entries = appState.coordinator.live.compactMap {
+                (id, state) -> (Card, SessionCoordinator.LiveState)? in
+                guard state.activity == .working
+                    || state.activity == .needsInput,
+                    let card = appState.card(id) else { return nil }
+                return (card, state)
             }
-            if running.isEmpty {
+            if entries.isEmpty {
                 Text("No agents running")
                     .font(DS.TypeStyle.cardMeta)
                     .foregroundStyle(DS.Color.Text.secondary)
             } else {
-                Text("\(running.count) agent\(running.count == 1 ? "" : "s") running")
-                    .font(DS.TypeStyle.cardTitle)
+                ForEach(entries, id: \.0.id) { card, state in
+                    Button {
+                        appState.focusCard(card.id)
+                    } label: {
+                        HStack(spacing: DS.Space.s200) {
+                            Image(systemName: state.activity == .needsInput
+                                  ? DS.Icon.awaitingPermission
+                                  : DS.Icon.sparkles)
+                                .foregroundStyle(
+                                    state.activity == .needsInput
+                                    ? DS.Status.caution.text
+                                    : DS.Color.Accent.text)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(card.title)
+                                    .font(DS.TypeStyle.cardMeta)
+                                    .foregroundStyle(DS.Color.Text.primary)
+                                    .lineLimit(1)
+                                Text(card.project?.name ?? "")
+                                    .font(DS.TypeStyle.timestamp)
+                                    .foregroundStyle(DS.Color.Text.tertiary)
+                            }
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(DS.Space.s400)
-        .frame(minWidth: 240)
+        .frame(minWidth: 260)
     }
 }
 
