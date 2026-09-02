@@ -1,6 +1,8 @@
 import SwiftUI
 import OvertureDesign
 import OvertureKit
+import ClaudeKit
+import ProcessCore
 
 @main
 struct OvertureApp: App {
@@ -122,8 +124,10 @@ struct OnboardingView: View {
                 checklistRow(icon: DS.Icon.awaitingPermission,
                              tint: DS.Status.caution,
                              title: "Claude Code isn’t signed in",
-                             detail: "Run `claude` once in a terminal and "
-                                + "sign in, then retry.")
+                             detail: "Sign in below — your browser opens on "
+                                + "Anthropic’s login page and the CLI stores "
+                                + "the credentials. Overture never sees them.")
+                SignInSection()
             case .ready, .none:
                 EmptyView()
             }
@@ -162,6 +166,91 @@ struct OnboardingView: View {
 
 enum OnboardingMinimum {
     static let text = "2.1.231"
+}
+
+/// App-initiated `claude auth login` (see AuthLogin): relays CLI output and
+/// forwards the confirmation code if the flow asks for one.
+struct SignInSection: View {
+    @Environment(AppState.self) private var appState
+    @State private var login: AuthLogin?
+    @State private var output: [String] = []
+    @State private var code = ""
+    @State private var running = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s300) {
+            if running {
+                ScrollView {
+                    Text(output.suffix(12).joined(separator: "\n"))
+                        .font(DS.TypeStyle.code)
+                        .foregroundStyle(DS.Color.Text.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 96)
+                .padding(DS.Space.s200)
+                .background(DS.Color.Surface.sunken,
+                            in: RoundedRectangle(cornerRadius: DS.Radius.sm))
+                HStack {
+                    TextField("Paste the confirmation code here if asked",
+                              text: $code)
+                        .textFieldStyle(.roundedBorder)
+                        .font(DS.TypeStyle.code)
+                        .onSubmit(submitCode)
+                    Button("Submit") { submitCode() }
+                        .disabled(code.isEmpty)
+                    Button("Cancel", role: .cancel) {
+                        Task { await login?.cancel() }
+                        running = false
+                    }
+                }
+            } else {
+                HStack {
+                    Button("Sign In with Claude") { start(.subscription) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Use API Console instead") { start(.console) }
+                }
+            }
+        }
+    }
+
+    private func start(_ mode: AuthLogin.Mode) {
+        guard let claudeURL = claudeExecutable() else { return }
+        let flow = AuthLogin()
+        login = flow
+        output = []
+        running = true
+        Task {
+            guard let events = try? await flow.start(claudeURL: claudeURL,
+                                                     mode: mode) else {
+                running = false
+                return
+            }
+            for await event in events {
+                switch event {
+                case .outputLine(let line):
+                    output.append(line)
+                case .finished:
+                    running = false
+                    await appState.services.runOnboarding()
+                }
+            }
+        }
+    }
+
+    private func submitCode() {
+        let text = code
+        code = ""
+        Task { await login?.submit(text) }
+    }
+
+    /// Auth probing can fail before onboarding resolves a URL — rediscover.
+    private func claudeExecutable() -> URL? {
+        if let url = appState.services.claudeURL { return url }
+        return HostEnvironment.claudeCandidatePaths
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+            .map(URL.init(fileURLWithPath:))
+    }
 }
 
 struct MenuBarView: View {
