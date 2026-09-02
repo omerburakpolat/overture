@@ -138,10 +138,11 @@ struct ChatTab: View {
                     Button("Open in Terminal") {
                         let path = card.worktreePath ?? store.project.path
                         NSWorkspace.shared.open(
-                            URL(fileURLWithPath: path),
+                            [URL(fileURLWithPath: path)],
                             withApplicationAt: URL(fileURLWithPath:
                                 "/System/Applications/Utilities/Terminal.app"),
-                            configuration: NSWorkspace.OpenConfiguration())
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil)
                     }
                 }
                 .padding(DS.Space.s400)
