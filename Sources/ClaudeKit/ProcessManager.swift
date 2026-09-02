@@ -44,10 +44,15 @@ public actor ProcessManager {
 
     /// Spawns a supervisor for a card. Callers (OvertureKit's queue policy)
     /// decide WHETHER to start; this enforces only the global cap.
+    /// `key` defaults to the card id; auxiliary sessions (test runs) pass a
+    /// distinct key so they can coexist with the card's primary supervisor.
+    /// The journal always records the real card for orphan reconciliation.
     public func start(cardID: UUID,
+                      key explicitKey: UUID? = nil,
                       context: CardSupervisor.SpawnContext)
         async throws -> AsyncStream<SupervisorEvent> {
-        guard supervisors[cardID] == nil else {
+        let key = explicitKey ?? cardID
+        guard supervisors[key] == nil else {
             throw ManagerError.cardAlreadyRunning(cardID)
         }
         guard supervisors.count < limits.maxLiveProcesses else {
@@ -58,7 +63,7 @@ public actor ProcessManager {
         context.envMarkers["OVERTURE_CARD_ID"] = cardID.uuidString
 
         let supervisor = CardSupervisor(context: context)
-        supervisors[cardID] = supervisor
+        supervisors[key] = supervisor
         do {
             let stream = try await supervisor.start()
             if let pid = await supervisor.pid {
@@ -66,12 +71,13 @@ public actor ProcessManager {
                                     sessionID: context.spec.sessionID,
                                     pid: pid,
                                     spawnedAt: Date(),
-                                    executablePath: context.claudeExecutable.path))
+                                    executablePath: context.claudeExecutable.path),
+                              key: key)
             }
             // Reap registry + journal when the stream ends.
-            return observeEnd(of: stream, cardID: cardID)
+            return observeEnd(of: stream, key: key)
         } catch {
-            supervisors[cardID] = nil
+            supervisors[key] = nil
             throw error
         }
     }
@@ -145,13 +151,13 @@ public actor ProcessManager {
     // MARK: - Journal plumbing
 
     private func observeEnd(of stream: AsyncStream<SupervisorEvent>,
-                            cardID: UUID) -> AsyncStream<SupervisorEvent> {
+                            key: UUID) -> AsyncStream<SupervisorEvent> {
         AsyncStream { continuation in
             let task = Task {
                 for await event in stream {
                     continuation.yield(event)
                     if case .processEnded = event {
-                        await self.reap(cardID: cardID)
+                        await self.reap(key: key)
                     }
                 }
                 continuation.finish()
@@ -160,15 +166,21 @@ public actor ProcessManager {
         }
     }
 
-    private func reap(cardID: UUID) {
-        supervisors[cardID] = nil
-        journal.removeAll { $0.cardID == cardID }
+    /// Journal rows are keyed by registry key; `cardID` stays the real card.
+    private var journalKeys: [UUID: UUID] = [:]
+
+    private func reap(key: UUID) {
+        supervisors[key] = nil
+        if let sessionID = journalKeys.removeValue(forKey: key) {
+            journal.removeAll { $0.sessionID == sessionID }
+        }
         persistJournal()
     }
 
-    private func appendJournal(_ entry: JournalEntry) {
-        journal.removeAll { $0.cardID == entry.cardID }
+    private func appendJournal(_ entry: JournalEntry, key: UUID) {
+        journal.removeAll { $0.sessionID == entry.sessionID }
         journal.append(entry)
+        journalKeys[key] = entry.sessionID
         persistJournal()
     }
 

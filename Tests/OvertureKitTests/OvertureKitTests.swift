@@ -293,3 +293,44 @@ private func makeCard(_ context: ModelContext, _ project: Project,
         #expect(fresh == [1024, 2048, 3072])
     }
 }
+
+@Suite struct TestVerdictParserTests {
+    @Test func passVerdict() {
+        let outcome = TestVerdictParser.parse(
+            "Ran the suite.\nAll good.\nVERDICT: PASS")
+        #expect(outcome.passed)
+        #expect(outcome.failures.isEmpty)
+    }
+
+    @Test func failWithBullets() {
+        let outcome = TestVerdictParser.parse("""
+        Build works but two checks fail.
+        VERDICT: FAIL
+        - Login times out: token refresh 401s
+        - Missing docs
+        """)
+        #expect(!outcome.passed)
+        #expect(outcome.failures.count == 2)
+        #expect(outcome.failures[0].title == "Login times out")
+        #expect(outcome.failures[0].detail == "token refresh 401s")
+        #expect(outcome.failures[1].detail.isEmpty)
+    }
+
+    @Test func markdownAndCaseDrift() {
+        #expect(TestVerdictParser.parse("**Verdict:** pass").passed)
+        #expect(!TestVerdictParser.parse("verdict FAIL").passed)
+    }
+
+    @Test func lastVerdictWins() {
+        let outcome = TestVerdictParser.parse(
+            "VERDICT: FAIL\n- early: x\nRe-ran flaky test.\nVERDICT: PASS")
+        #expect(outcome.passed)
+        #expect(outcome.failures.isEmpty)
+    }
+
+    @Test func noVerdictFailsClosed() {
+        let outcome = TestVerdictParser.parse("Everything looked fine!")
+        #expect(!outcome.passed)
+        #expect(outcome.summary == "No verdict reported")
+    }
+}

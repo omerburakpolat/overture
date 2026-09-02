@@ -64,9 +64,21 @@ public final class SessionCoordinator {
                     runKind: .planning, kind: .plan, initialMessage: prompt)
     }
 
-    /// Starts (or resumes) autonomous execution.
+    /// Starts (or resumes) autonomous execution. Enforces the project's run
+    /// slots (spec 04 §7.4): single-dir = 1, worktree = maxParallelAgents;
+    /// at capacity the card queues and is promoted when a slot frees.
     public func startExecution(for card: Card) async {
         guard let project = card.project else { return }
+        let othersRunning = project.cards.filter {
+            $0.id != card.id && $0.archivedAt == nil && $0.subState.pinsCard
+        }.count
+        let slots = project.executionMode == .singleDirectory
+            ? 1 : max(1, project.maxParallelAgents)
+        if othersRunning >= slots {
+            try? BoardEngine.apply(.queued, to: card, in: context)
+            try? context.save()
+            return
+        }
         if let supervisor = await services.processManager.supervisor(for: card.id) {
             // Plan session flipping to build: same process, same context.
             try? await supervisor.setPermissionMode(
@@ -179,14 +191,165 @@ public final class SessionCoordinator {
                 await removeWorktree(for: card)
             case .promoteNextQueuedCard:
                 await promoteNextQueued(project: card.project)
+            case .startAgentTests:
+                await startAgentTests(for: card)
             case .resumeSessionForFeedback, .prepareFixMessage,
-                 .startAgentTests, .openMergeSheet, .announceMove,
-                 .flyBack:
+                 .openMergeSheet, .announceMove, .flyBack:
                 // Rendered/driven by the UI layer (composer prefill, sheets,
-                // animations); agent tests land in M2.
+                // animations).
                 continue
             }
         }
+    }
+
+    // MARK: - Agent-driven testing (spec 04 §8.3)
+
+    /// Test-session registry keys, distinct from the primary supervisor's.
+    private var testSessionKeys: [UUID: UUID] = [:]
+
+    /// Fresh session, role `.test`: verify-don't-fix — Edit/Write excluded
+    /// from the tool set (resolution #20), Bash allowlisted so runs never
+    /// stall on permissions, budget-capped. Verdict parsed from the final
+    /// message's `VERDICT:` line (streaming mode has no --json-schema).
+    public func startAgentTests(for card: Card) async {
+        guard let project = card.project,
+              let claudeURL = services.claudeURL,
+              testSessionKeys[card.id] == nil else { return }
+        let cwd = card.worktreePath.map(URL.init(fileURLWithPath:))
+            ?? URL(fileURLWithPath: project.path)
+        let sessionID = UUID()
+        let key = UUID()
+        let spec = ClaudeCLI.SessionSpec(
+            sessionID: sessionID,
+            profile: .autonomous,
+            model: card.model,
+            allowedTools: ["Bash"],
+            maxBudgetUSD: project.testBudgetUSD > 0 ? project.testBudgetUSD : 3,
+            tools: "Bash,Read,Glob,Grep",
+            settingSources: ProcessInfo.processInfo
+                .environment["OVERTURE_MINIMAL_CLAUDE_ENV"] == "1" ? "" : nil,
+            strictMCPConfig: ProcessInfo.processInfo
+                .environment["OVERTURE_MINIMAL_CLAUDE_ENV"] == "1")
+        do {
+            let stream = try await services.processManager.start(
+                cardID: card.id, key: key,
+                context: .init(claudeExecutable: claudeURL,
+                               workingDirectory: cwd,
+                               spec: spec, runKind: .testRun))
+            testSessionKeys[card.id] = key
+            let sessionRef = SessionRef(sessionID: sessionID, card: card,
+                                        segments: [.init(cwd: cwd.path,
+                                                         transcriptPath: "",
+                                                         from: .now)],
+                                        kind: .testing, role: .test)
+            context.insert(sessionRef)
+            let run = TestRun(card: card, kind: .agentDriven,
+                              command: project.testCommand,
+                              agentSessionID: sessionID)
+            context.insert(run)
+            try? context.save()
+            appendLive(card.id, .init(id: UUID().uuidString, kind: .notice,
+                                      text: "Agent test run started."))
+            let cardID = card.id
+            let runID = run.id
+            Task { [weak self] in
+                await self?.pumpTest(stream, cardID: cardID, runID: runID,
+                                     key: key)
+            }
+            if let supervisor = await services.processManager
+                .supervisor(for: key) {
+                try? await supervisor.send(
+                    userText: Self.testPrompt(for: card, project: project))
+            }
+        } catch {
+            // No slot / spawn failure: fall through to Review un-verified.
+            if let effects = try? BoardEngine.apply(
+                .testsPassed(verdict: .manualPass), to: card, in: context) {
+                await execute(effects, for: card)
+            }
+            try? context.save()
+        }
+    }
+
+    private func pumpTest(_ stream: AsyncStream<SupervisorEvent>,
+                          cardID: UUID, runID: UUID, key: UUID) async {
+        for await event in stream {
+            guard let card = fetchCard(cardID) else { continue }
+            switch event {
+            case .turnCompleted(let result, _):
+                card.totalCostUSD += result.totalCostUSD ?? 0
+                finishTestRun(card: card, runID: runID,
+                              resultText: result.resultText,
+                              isError: result.isError)
+                if let supervisor = await services.processManager
+                    .supervisor(for: key) {
+                    _ = await supervisor.detach()
+                }
+            case .permissionRequested(let requestID, _):
+                // Test sessions must never stall: deny with steering.
+                if let supervisor = await services.processManager
+                    .supervisor(for: key) {
+                    try? await supervisor.answerPermission(
+                        requestID: requestID,
+                        verdict: .deny(message: "Not permitted during a test "
+                            + "run — verify by other means and report."))
+                }
+            case .processEnded:
+                testSessionKeys[cardID] = nil
+            default:
+                break
+            }
+        }
+    }
+
+    private func finishTestRun(card: Card, runID: UUID,
+                               resultText: String?, isError: Bool) {
+        let run = card.testRuns.first { $0.id == runID }
+        let verdict = TestVerdictParser.parse(resultText ?? "")
+        run?.finishedAt = .now
+        run?.summary = verdict.summary
+        run?.failures = verdict.failures
+        if isError {
+            run?.status = .aborted
+            run?.verdict = nil
+        } else {
+            run?.status = verdict.passed ? .passed : .failed
+            run?.verdict = verdict.passed ? .pass : .fail
+        }
+        appendLive(card.id, .init(
+            id: UUID().uuidString, kind: .notice,
+            text: "Agent tests: \(verdict.passed && !isError ? "passed" : "failed") — \(verdict.summary)"))
+        let transition: CardTransition = (verdict.passed && !isError)
+            ? .testsPassed(verdict: .pass) : .testsFailed
+        if let effects = try? BoardEngine.apply(transition, to: card,
+                                                in: context) {
+            Task { await self.execute(effects, for: card) }
+        }
+        try? context.save()
+    }
+
+    static func testPrompt(for card: Card, project: Project) -> String {
+        var prompt = """
+        You are verifying finished work — do NOT fix anything. Build/run \
+        the checks and verify each acceptance criterion by the cheapest \
+        honest means. \
+
+        """
+        if let command = project.testCommand, !command.isEmpty {
+            prompt += "The project's test command is: \(command)\n"
+        }
+        prompt += """
+
+        ## Ticket under test
+        \(ticketText(card))
+
+        End your final message with exactly one line:
+        VERDICT: PASS
+        or
+        VERDICT: FAIL
+        followed (on failure) by one bullet per failure: - <title>: <detail>
+        """
+        return prompt
     }
 
     // MARK: - Spawning
