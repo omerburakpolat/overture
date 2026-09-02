@@ -70,15 +70,118 @@ public final class BoardStore {
         return card
     }
 
-    public func markDone(_ card: Card) {
+    // MARK: - Approve → Done (spec 04 §9)
+
+    public enum ApproveChoice: Sendable {
+        case mergeLocally        // worktree: squash-merge + cleanup
+        case openPR              // worktree: push + gh pr create
+        case commitSingleDir     // single-dir: stage + commit
+        case leaveUncommitted    // single-dir: user owns the commit
+        case justMarkDone        // no git action (branch/worktree kept)
+    }
+
+    /// Card awaiting the merge sheet; set by the approval entry points.
+    public var mergeCandidate: Card?
+
+    public func requestApproval(_ card: Card) {
+        guard card.column == .review || card.column == .testing else {
+            toast = Toast(message: "Approve from Review (or Testing).")
+            return
+        }
+        mergeCandidate = card
+    }
+
+    /// Executes the chosen pipeline, then applies Approve→Done. Returns a
+    /// user-facing error (card stays put) or nil on success.
+    public func approve(_ card: Card, choice: ApproveChoice) async -> String? {
+        let repo = URL(fileURLWithPath: project.path)
+        let service = MergeService()
+        do {
+            switch choice {
+            case .mergeLocally:
+                guard let branch = card.branchName else {
+                    throw MergeService.MergeError.missingBranch
+                }
+                try await service.mergeLocally(
+                    branch: branch, worktreePath: card.worktreePath,
+                    cardTitle: card.title, cardBody: card.details,
+                    defaultBranch: project.defaultBranch, repo: repo)
+                card.worktreePath = nil
+            case .openPR:
+                guard let branch = card.branchName else {
+                    throw MergeService.MergeError.missingBranch
+                }
+                let body = card.details.isEmpty
+                    ? (card.lastAssistantSummary ?? "")
+                    : card.details
+                let pr = try await service.openPR(
+                    branch: branch, worktreePath: card.worktreePath,
+                    title: card.title, body: body, repo: repo,
+                    github: GitHubService())
+                card.prNumber = pr.number
+                card.prURL = pr.url
+                card.worktreePath = nil
+            case .commitSingleDir:
+                try await service.commitSingleDir(
+                    cardID: card.id, cardTitle: card.title,
+                    cardBody: card.details, repo: repo)
+            case .leaveUncommitted:
+                await service.leaveUncommitted(cardID: card.id, repo: repo)
+            case .justMarkDone:
+                break
+            }
+        } catch let error as MergeService.MergeError {
+            if case .conflicts(let files) = error {
+                try? BoardEngine.apply(.mergeConflictDetected, to: card,
+                                       in: context)
+                try? context.save()
+                return "Merge conflicts in: "
+                    + files.prefix(5).joined(separator: ", ")
+            }
+            return Self.describe(error)
+        } catch {
+            return "\(error)"
+        }
         do {
             let effects = try BoardEngine.apply(.approveToDone, to: card,
                                                 in: context)
             try context.save()
             Task { await coordinator.execute(effects, for: card) }
+            return nil
         } catch let error as TransitionError {
-            toast = Toast(message: error.reason)
-        } catch {}
+            return error.reason
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    /// "Ask Claude to resolve" on a merge-conflicted card: back to
+    /// In Progress with a rebase instruction to the primary session.
+    public func resolveConflictWithClaude(_ card: Card) {
+        _ = try? BoardEngine.apply(.requestChanges, to: card, in: context)
+        try? context.save()
+        let instruction = "The merge into \(project.defaultBranch) has "
+            + "conflicts. Rebase your branch onto \(project.defaultBranch), "
+            + "resolve the conflicts preserving both intents, and verify the "
+            + "build still passes."
+        Task { await coordinator.sendChat(instruction, to: card) }
+    }
+
+    private static func describe(_ error: MergeService.MergeError) -> String {
+        switch error {
+        case .defaultBranchNotCheckedOut(let current):
+            "Check out the default branch first (currently on "
+            + "\(current ?? "detached HEAD"))."
+        case .defaultBranchDirty(let count):
+            "The default branch has \(count) uncommitted change"
+            + "\(count == 1 ? "" : "s") — commit or stash first."
+        case .conflicts:
+            "Merge conflicts."
+        case .missingBranch:
+            "This card has no branch to merge."
+        case .github(let detail):
+            "GitHub: \(detail)"
+        }
     }
 
     public func reopen(_ card: Card) {

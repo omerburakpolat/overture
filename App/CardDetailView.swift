@@ -24,7 +24,7 @@ struct CardDetailView: View {
             header
             Divider()
             switch tab {
-            case .chat: ChatTab(card: card)
+            case .chat: ChatTab(card: card, store: store)
             case .diff: DiffTab(card: card)
             case .activity: ActivityTab(card: card)
             }
@@ -45,9 +45,9 @@ struct CardDetailView: View {
                     .background(card.column.status.tint, in: Capsule())
                 Spacer()
                 if card.column == .review || card.column == .testing {
-                    Button("Approve → Done") {
-                        store.markDone(card)
+                    Button("Approve → Done…") {
                         dismiss()
+                        store.requestApproval(card)
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -79,6 +79,7 @@ struct CardDetailView: View {
 struct ChatTab: View {
     @Environment(AppState.self) private var appState
     let card: Card
+    let store: BoardStore
     @State private var draft = ""
     @State private var history: [TranscriptItem] = []
 
@@ -122,6 +123,30 @@ struct ChatTab: View {
             }
             ForEach(liveState?.pendingPermissions ?? []) { pending in
                 PermissionBanner(card: card, pending: pending)
+            }
+            if card.subState == .mergeConflict {
+                HStack(spacing: DS.Space.s300) {
+                    Label("Merge conflicts with \(store.project.defaultBranch)",
+                          systemImage: DS.Icon.conflict)
+                        .font(DS.TypeStyle.cardTitle)
+                        .foregroundStyle(DS.Status.danger.text)
+                    Spacer()
+                    Button("Ask Claude to resolve") {
+                        store.resolveConflictWithClaude(card)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Open in Terminal") {
+                        let path = card.worktreePath ?? store.project.path
+                        NSWorkspace.shared.open(
+                            URL(fileURLWithPath: path),
+                            withApplicationAt: URL(fileURLWithPath:
+                                "/System/Applications/Utilities/Terminal.app"),
+                            configuration: NSWorkspace.OpenConfiguration())
+                    }
+                }
+                .padding(DS.Space.s400)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DS.Status.danger.tint)
             }
             if let error = liveState?.lastError {
                 Label(error, systemImage: DS.Icon.error)

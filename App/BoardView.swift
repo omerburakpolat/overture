@@ -71,6 +71,10 @@ struct BoardView: View {
         .sheet(item: $selectedCard) { card in
             CardDetailView(card: card, store: store)
         }
+        .sheet(item: Binding(get: { store.mergeCandidate },
+                             set: { store.mergeCandidate = $0 })) { card in
+            MergeSheet(card: card, store: store)
+        }
         .overlay(alignment: .bottom) {
             if let toast = store.toast {
                 Text(toast.message)
@@ -153,7 +157,7 @@ struct ColumnView: View {
 
     @ViewBuilder private func cardMenu(_ card: Card) -> some View {
         if card.column == .review || card.column == .testing {
-            Button("Approve → Done") { store.markDone(card) }
+            Button("Approve → Done…") { store.requestApproval(card) }
         }
         if card.column == .done {
             Button("Reopen") { store.reopen(card) }
