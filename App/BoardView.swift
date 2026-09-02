@@ -45,6 +45,7 @@ struct BoardView: View {
     @State var store: BoardStore
     @State private var selectedCard: Card?
     @State private var showComposer = false
+    @State private var showSettings = false
     @Namespace private var boardSpace
 
     /// Card→column layout identity; drives the auto-move/fly-back travel
@@ -81,11 +82,19 @@ struct BoardView: View {
         .navigationTitle(store.project.name)
         .toolbar {
             Button {
+                showSettings = true
+            } label: {
+                Label("Project Settings", systemImage: DS.Icon.settings)
+            }
+            Button {
                 showComposer = true
             } label: {
                 Label("New Ticket", systemImage: DS.Icon.newTicket)
             }
             .keyboardShortcut("n", modifiers: .command)
+        }
+        .sheet(isPresented: $showSettings) {
+            ProjectSettingsSheet(project: store.project)
         }
         .sheet(isPresented: $showComposer) {
             TicketComposer(store: store)

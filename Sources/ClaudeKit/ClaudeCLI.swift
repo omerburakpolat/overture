@@ -147,4 +147,15 @@ public enum ClaudeCLI {
     /// Env prefixes stripped from every claude child (M0 finding #10:
     /// nested-session context must not leak).
     public static let strippedEnvPrefixes = ["CLAUDE"]
+
+    /// Default allow rules for autonomous execution runs: local git
+    /// bookkeeping never stalls a build. Deliberately excludes anything that
+    /// leaves the machine (`push`, `fetch`, remotes) — those still surface.
+    public static let defaultAutonomousAllowRules = [
+        "Bash(git add *)", "Bash(git commit *)", "Bash(git status)",
+        "Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",
+        "Bash(git show *)", "Bash(git branch)", "Bash(git branch *)",
+        "Bash(git checkout *)", "Bash(git restore *)", "Bash(git mv *)",
+        "Bash(git rm *)", "Bash(git stash *)",
+    ]
 }

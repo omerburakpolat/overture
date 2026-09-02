@@ -394,12 +394,15 @@ public final class SessionCoordinator {
         // no MCP) — product sessions load everything (spec 01 §6).
         let minimalEnv = ProcessInfo.processInfo
             .environment["OVERTURE_MINIMAL_CLAUDE_ENV"] == "1"
+        let autonomous = profile == .autonomous || profile == .fullAuto
         let spec = ClaudeCLI.SessionSpec(
             sessionID: sessionID,
             resume: existing != nil,
             profile: profile,
             model: card.model,
             effort: card.effort,
+            allowedTools: autonomous
+                ? ClaudeCLI.defaultAutonomousAllowRules : [],
             maxBudgetUSD: project.runBudgetUSD > 0 ? project.runBudgetUSD : nil,
             settingSources: minimalEnv ? "" : nil,
             strictMCPConfig: minimalEnv)
