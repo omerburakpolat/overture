@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import ProcessCore
 
 /// Dev servers for the embedded preview pane (spec 02 §9). One server per
@@ -44,8 +43,11 @@ public actor DevServerManager {
 
         let port = basePort + nextSlot
         nextSlot += 1
+        // 2>&1: dev servers log readiness banners to stderr (python, vite);
+        // the console strip must show them.
         let command = commandTemplate
             .replacingOccurrences(of: "{port}", with: String(port))
+            + " 2>&1"
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         var environment = ProcessInfo.processInfo.environment
         environment["PORT"] = String(port)   // belt-and-braces for env readers
@@ -122,54 +124,17 @@ public actor DevServerManager {
         servers[key] = nil
     }
 
+    /// Any HTTP response (a 404 included) means the server is up; only a
+    /// refused/failed connection means "not yet". Plain URLSession — the
+    /// dev servers here are HTTP by definition, and this probe behaves
+    /// identically on developer machines and CI runners.
     private static func canConnect(port: Int) async -> Bool {
-        await withCheckedContinuation { continuation in
-            let connection = NWConnection(
-                host: .ipv4(.loopback),
-                port: NWEndpoint.Port(rawValue: UInt16(port))!,
-                using: .tcp)
-            // resume-once guard: state handler can fire repeatedly.
-            let resumed = Locked(false)
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    if resumed.exchange(true) == false {
-                        connection.cancel()
-                        continuation.resume(returning: true)
-                    }
-                case .failed, .cancelled:
-                    if resumed.exchange(true) == false {
-                        continuation.resume(returning: false)
-                    }
-                default:
-                    break
-                }
-            }
-            connection.start(queue: .global())
-            DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-                if resumed.exchange(true) == false {
-                    connection.cancel()
-                    continuation.resume(returning: false)
-                }
-            }
-        }
-    }
-}
-
-/// Minimal lock for the connect probe's resume-once guard.
-private final class Locked<Value>: @unchecked Sendable {
-    private var value: Value
-    private let lock = NSLock()
-
-    init(_ value: Value) {
-        self.value = value
-    }
-
-    func exchange(_ new: Value) -> Value {
-        lock.lock()
-        defer { lock.unlock() }
-        let old = value
-        value = new
-        return old
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 2
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!)
+        request.httpMethod = "HEAD"
+        return (try? await session.data(for: request)) != nil
     }
 }

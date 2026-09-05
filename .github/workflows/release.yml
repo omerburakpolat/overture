@@ -60,15 +60,18 @@ jobs:
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
-          BIN=".build-app/SourcePackages/artifacts/sparkle/Sparkle/bin"
-          [ -d "$BIN" ] || BIN="$(find ~/Library/Developer -type d \
-            -path '*artifacts/sparkle/Sparkle/bin' 2>/dev/null | head -1)"
+          BIN="$(find build/release/DerivedData/SourcePackages -type d \
+            -path '*artifacts/sparkle/Sparkle/bin' | head -1)"
+          mkdir -p dist && mv build/Overture-*.dmg dist/
           echo "$SPARKLE_ED_PRIVATE_KEY" | "$BIN/generate_appcast" \
-            --ed-key-file - build/
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/omerburakpolat/overture/releases/download/${GITHUB_REF_NAME}/" \
+            --link "https://github.com/omerburakpolat/overture" \
+            dist/
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/Overture-*.dmg
-            build/appcast.xml
+            dist/Overture-*.dmg
+            dist/appcast.xml
           generate_release_notes: true
