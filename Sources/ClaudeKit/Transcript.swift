@@ -18,6 +18,34 @@ public enum TranscriptStore {
             .appendingPathComponent(".claude")
     }
 
+    /// Observed encoding rule: every non-alphanumeric character becomes "-".
+    /// Fine for DISPLAY lookups (tiles); never trusted for session identity
+    /// (that path goes through `locate`).
+    public static func encodedDirName(forCWD path: String) -> String {
+        String(path.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+    }
+
+    /// Newest transcript in a cwd's project dir — powers "last chat" tiles
+    /// for sessions Overture did NOT spawn (terminal/Desktop usage).
+    public static func newestTranscript(forCWD path: String,
+                                        configRoot: URL = configRoot()) -> URL? {
+        let dir = configRoot.appendingPathComponent("projects")
+            .appendingPathComponent(encodedDirName(forCWD: path))
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]))
+            ?? []
+        return files.filter { $0.pathExtension == "jsonl" }
+            .max { lhs, rhs in
+                let l = (try? lhs.resourceValues(
+                    forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                let r = (try? rhs.resourceValues(
+                    forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                return l < r
+            }
+    }
+
     /// The cwd-encoding is non-injective and version-dependent — NEVER
     /// derive-and-trust. Locate a session by globbing every project dir
     /// (resolution #5; M0 finding #9 confirms lines stay at the origin dir

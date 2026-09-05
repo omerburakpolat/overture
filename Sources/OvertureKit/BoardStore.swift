@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import ClaudeKit
 import GitKit
 
 /// Per-open-project board state: cards by column, drag handling through
@@ -155,6 +156,67 @@ public final class BoardStore {
         }
     }
 
+    // MARK: - Derived git state (resolution #15: milestone recompute,
+    // never FSEvents on agent dirs)
+
+    /// Titles of other active cards touching the same files, per card.
+    public private(set) var overlaps: [UUID: [String]] = [:]
+
+    /// Recomputes cached diff stats + overlapping-file warnings for active
+    /// cards. Called on board appear and after runs end/cards move.
+    public func refreshDerivedGitState() async {
+        let repo = URL(fileURLWithPath: project.path)
+        let runner = GitRunner()
+        let refs = SnapshotRefs(runner: runner)
+        let active = project.cards.filter {
+            $0.archivedAt == nil
+                && [.inProgress, .testing, .review].contains($0.column)
+        }
+        var changedPaths: [UUID: Set<String>] = [:]
+
+        for card in active {
+            let range: String?
+            if let branch = card.branchName {
+                range = (try? await refs.mergeBase(
+                    of: branch, and: project.defaultBranch, in: repo))
+                    .map { "\($0)...\(branch)" }
+            } else if let base = card.baseRef {
+                range = base   // single-dir: snapshot ref vs working tree
+            } else {
+                range = nil
+            }
+            guard let range else { continue }
+            if let numstat = try? await runner.run(
+                ["diff", "--numstat", range], in: repo) {
+                let stats = DiffParser.stats(fromNumstat: numstat)
+                card.cachedFilesChanged = stats.filesChanged
+                card.cachedInsertions = stats.insertions
+                card.cachedDeletions = stats.deletions
+            }
+            if project.executionMode == .worktreePerCard,
+               let names = try? await runner.run(
+                ["diff", "--name-only", range], in: repo) {
+                changedPaths[card.id] = DiffParser.paths(fromNameOnly: names)
+            }
+        }
+
+        // Pairwise intersection → "overlaps <other card>" chips (spec 04
+        // §10): first to merge wins; the second hits the conflict flow.
+        var result: [UUID: [String]] = [:]
+        for card in active {
+            guard let mine = changedPaths[card.id] else { continue }
+            let others = active.filter {
+                $0.id != card.id
+                    && changedPaths[$0.id]?.isDisjoint(with: mine) == false
+            }
+            if !others.isEmpty {
+                result[card.id] = others.map(\.title)
+            }
+        }
+        overlaps = result
+        try? context.save()
+    }
+
     /// "Ask Claude to resolve" on a merge-conflicted card: back to
     /// In Progress with a rebase instruction to the primary session.
     public func resolveConflictWithClaude(_ card: Card) {
@@ -208,6 +270,9 @@ public final class ProjectsStore {
 
     private let services: AppServices
     public private(set) var gitStatus: [UUID: GitStatus] = [:]
+    /// "Last chat" from Claude Code's own store — covers sessions run in a
+    /// terminal or Desktop against the same project, not just Overture's.
+    public private(set) var lastChat: [UUID: TranscriptSummary] = [:]
 
     public init(services: AppServices) {
         self.services = services
@@ -265,6 +330,15 @@ public final class ProjectsStore {
         if let status = try? await reader.status(
             in: URL(fileURLWithPath: project.path)) {
             gitStatus[project.id] = status
+        }
+        // Cheap tail-read of the newest transcript in the project's cwd.
+        let path = project.path
+        let summary = await Task.detached(priority: .utility) {
+            TranscriptStore.newestTranscript(forCWD: path)
+                .map { TranscriptReader.summary(of: $0) }
+        }.value
+        if let summary {
+            lastChat[project.id] = summary
         }
     }
 }

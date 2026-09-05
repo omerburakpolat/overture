@@ -144,7 +144,7 @@ struct ProjectTile: View {
                   systemImage: DS.Icon.sparkles)
                 .font(DS.TypeStyle.tileSummary)
                 .foregroundStyle(DS.Color.Accent.text)
-        } else if let summary = lastSummary {
+        } else if let summary = freshestSummary {
             Text(summary)
                 .font(DS.TypeStyle.tileSummary)
                 .foregroundStyle(DS.Color.Text.secondary)
@@ -156,11 +156,21 @@ struct ProjectTile: View {
         }
     }
 
-    private var lastSummary: String? {
-        project.cards
-            .compactMap { card in card.lastAssistantSummary.map {
-                (card.lastActivityAt ?? .distantPast, $0) } }
-            .max { $0.0 < $1.0 }?.1
+    /// Freshest of: Overture card activity vs the newest transcript in the
+    /// project dir (sessions run in a terminal/Desktop count too).
+    private var freshestSummary: String? {
+        var candidates: [(Date, String)] = project.cards.compactMap { card in
+            card.lastAssistantSummary.map {
+                (card.lastActivityAt ?? .distantPast, $0)
+            }
+        }
+        if let external = appState.projectsStore.lastChat[project.id],
+           let snippet = external.lastMessageSnippet {
+            candidates.append((external.lastTimestamp ?? .distantPast,
+                               external.title.map { "\($0) — \(snippet)" }
+                                   ?? snippet))
+        }
+        return candidates.max { $0.0 < $1.0 }?.1
     }
 
     @ViewBuilder private var footer: some View {

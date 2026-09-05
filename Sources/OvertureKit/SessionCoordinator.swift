@@ -1,3 +1,4 @@
+import Accessibility
 import Foundation
 import SwiftData
 import ClaudeKit
@@ -208,8 +209,10 @@ public final class SessionCoordinator {
                 await promoteNextQueued(project: card.project)
             case .startAgentTests:
                 await startAgentTests(for: card)
+            case .announceMove(let from, let to):
+                announceMove(card: card, from: from, to: to)
             case .resumeSessionForFeedback, .prepareFixMessage,
-                 .openMergeSheet, .announceMove, .flyBack:
+                 .openMergeSheet, .flyBack:
                 // Rendered/driven by the UI layer (composer prefill, sheets,
                 // animations).
                 continue
@@ -643,6 +646,13 @@ public final class SessionCoordinator {
 
     private func appendLive(_ cardID: UUID, _ item: LiveChatItem) {
         live[cardID, default: .init()].transcript.append(item)
+    }
+
+    /// VoiceOver parity for agent-driven moves (spec 03 §8.3): sighted users
+    /// see the card travel; VO users hear it.
+    private func announceMove(card: Card, from: Column, to: Column) {
+        AccessibilityNotification.Announcement(
+            "\(card.title) moved to \(to.rawValue)").post()
     }
 
     // MARK: - Prompt composition

@@ -72,6 +72,9 @@ struct BoardView: View {
                        value: layoutFingerprint)
         }
         .background(DS.Color.Surface.canvas)
+        .task(id: layoutFingerprint) {
+            await store.refreshDerivedGitState()
+        }
         .onChange(of: appState.pendingCardFocus) {
             guard let focusID = appState.pendingCardFocus,
                   let card = store.project.cards.first(
@@ -140,7 +143,8 @@ struct ColumnView: View {
             ScrollView {
                 LazyVStack(spacing: DS.Layout.cardGap) {
                     ForEach(cards) { card in
-                        CardView(card: card)
+                        CardView(card: card,
+                                 overlaps: store.overlaps[card.id] ?? [])
                             .matchedGeometryEffect(id: card.id, in: boardSpace)
                             .onTapGesture { selectedCard = card }
                             .draggable(card.id.uuidString)
@@ -208,6 +212,7 @@ struct ColumnView: View {
 struct CardView: View {
     @Environment(AppState.self) private var appState
     let card: Card
+    var overlaps: [String] = []
 
     private var liveState: SessionCoordinator.LiveState? {
         appState.coordinator.live[card.id]
@@ -240,6 +245,18 @@ struct CardView: View {
             }
 
             contextLine
+
+            if let first = overlaps.first {
+                Label(overlaps.count == 1
+                      ? "Overlaps “\(first)”"
+                      : "Overlaps \(overlaps.count) cards",
+                      systemImage: DS.Icon.conflict)
+                    .font(DS.TypeStyle.timestamp)
+                    .foregroundStyle(DS.Status.caution.text)
+                    .lineLimit(1)
+                    .help("These cards changed the same files — the second "
+                          + "to merge will hit conflicts.")
+            }
 
             footer
         }

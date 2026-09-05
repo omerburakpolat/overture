@@ -37,6 +37,22 @@ public final class AppServices {
         onboarding = await OnboardingCheck.run()
     }
 
+    /// Done cards leave the board after 14 days (spec 04 assumption #7);
+    /// archived cards stay queryable via "Show archived". Run at launch.
+    public func autoArchiveDoneCards(olderThan days: Int = 14) {
+        let context = container.mainContext
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days,
+                                           to: .now) ?? .now
+        let descriptor = FetchDescriptor<Card>(
+            predicate: #Predicate {
+                $0.archivedAt == nil && $0.doneAt != nil && $0.doneAt! < cutoff
+            })
+        for card in (try? context.fetch(descriptor)) ?? [] {
+            card.archivedAt = .now
+        }
+        try? context.save()
+    }
+
     /// Relaunch reconciliation (resolution #7/#25): dead journal rows mark
     /// their cards resumable; still-alive orphans are reported for the UI.
     public func reconcileOrphans() async -> ProcessManager.Reconciliation {

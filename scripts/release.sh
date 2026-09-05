@@ -3,9 +3,8 @@
 # Usage: scripts/release.sh <version> [signing-identity]
 #   e.g. scripts/release.sh 0.1.0
 #        scripts/release.sh 0.1.0-dev "Apple Development"   (local smoke test)
-# Default identity requires a Developer ID Application certificate
-# (docs/RELEASING.md). SYMROOT is forced local so machine-global Xcode
-# build-location settings can't redirect the products.
+# SYMROOT is forced local so machine-global Xcode build-location settings
+# can't redirect the products.
 set -euo pipefail
 VERSION="${1:?version required (e.g. 0.1.0)}"
 IDENTITY="${2:-Developer ID Application}"
@@ -23,12 +22,39 @@ xcodebuild -project "$ROOT/Overture.xcodeproj" -scheme Overture \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$IDENTITY" \
   DEVELOPMENT_TEAM="$TEAM" \
+  CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   OTHER_CODE_SIGN_FLAGS="--timestamp" \
   build | tail -3
 
 APP="$BUILD/Products/Release/Overture.app"
+
+# Sparkle ships pre-signed by its own project; notarization requires OUR
+# Developer ID + secure timestamp on every nested executable. Re-sign
+# inside-out (per Sparkle's own signing guidance), then reseal the app.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+if [ -d "$SPARKLE" ]; then
+  for XPC in "$SPARKLE/Versions/B/XPCServices/"*.xpc; do
+    codesign -f -o runtime --timestamp --preserve-metadata=entitlements \
+      -s "$IDENTITY" "$XPC"
+  done
+  codesign -f -o runtime --timestamp -s "$IDENTITY" \
+    "$SPARKLE/Versions/B/Autoupdate"
+  codesign -f -o runtime --timestamp -s "$IDENTITY" \
+    "$SPARKLE/Versions/B/Updater.app"
+  codesign -f -o runtime --timestamp -s "$IDENTITY" "$SPARKLE"
+fi
+codesign -f -o runtime --timestamp \
+  --entitlements "$ROOT/App/Overture.entitlements" \
+  -s "$IDENTITY" "$APP"
+
 codesign --verify --deep --strict "$APP"
-codesign --display --verbose=2 "$APP" 2>&1 | grep -E 'Authority|flags' | head -4
+# get-task-allow must NOT appear in a distribution build.
+if codesign --display --entitlements - "$APP" 2>/dev/null \
+    | grep -q get-task-allow; then
+  echo "ERROR: get-task-allow entitlement present" >&2
+  exit 1
+fi
+codesign --display --verbose=2 "$APP" 2>&1 | grep -E 'Authority|flags' | head -3
 "$ROOT/scripts/make-dmg.sh" "$APP" "$ROOT/build/Overture-$VERSION.dmg"
 echo "DMG: $ROOT/build/Overture-$VERSION.dmg"
 echo "Next (distribution builds): scripts/notarize.sh build/Overture-$VERSION.dmg"

@@ -31,6 +31,12 @@ struct OvertureApp: App {
         }
         .commands {
             CheckForUpdatesCommand(updater: updater.updater)
+            CommandGroup(after: .toolbar) {
+                Button("Jump to Card or Project…") {
+                    appState?.showCommandPalette.toggle()
+                }
+                .keyboardShortcut("k", modifiers: .command)
+            }
         }
 
         Settings {
@@ -115,6 +121,7 @@ final class AppState {
     /// Card a notification/menu-bar click wants opened (BoardView consumes).
     var pendingCardFocus: UUID?
     var notificationManager: NotificationManager?
+    var showCommandPalette = false
     let devServers = DevServerManager()
 
     init() throws {
@@ -147,10 +154,23 @@ struct RootView: View {
             AppDelegate.shared?.state = appState
             await appState.services.runOnboarding()
             _ = await appState.services.reconcileOrphans()
+            appState.services.autoArchiveDoneCards()
             onboardingDone = true
         }
         .sheet(isPresented: .constant(needsOnboardingSheet)) {
             OnboardingView()
+        }
+        .overlay {
+            if appState.showCommandPalette {
+                ZStack(alignment: .top) {
+                    DS.Color.Text.primary.opacity(0.15)
+                        .ignoresSafeArea()
+                        .onTapGesture { appState.showCommandPalette = false }
+                    CommandPalette()
+                        .padding(.top, DS.Space.s1600)
+                }
+                .transition(.opacity)
+            }
         }
     }
 
