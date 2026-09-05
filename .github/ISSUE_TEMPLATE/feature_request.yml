@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an idea for Overture
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the situation, not the solution. What are you doing when this bites?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Overture to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+    validations:
+      required: false
+  - type: checkboxes
+    id: specs
+    attributes:
+      label: Design specs
+      description: "Overture's behavior is specified in docs/specs/ — 00-resolutions.md wins conflicts."
+      options:
+        - label: I have checked whether the specs already cover this
+          required: false

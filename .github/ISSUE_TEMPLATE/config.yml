@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/omerburakpolat/overture/discussions
+    about: Ask questions and share what you are building in Discussions.
+  - name: Security vulnerability
+    url: https://github.com/omerburakpolat/overture/security/advisories/new
+    about: Report privately. Please do not open a public issue.
