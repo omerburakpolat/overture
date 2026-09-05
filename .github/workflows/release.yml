@@ -52,6 +52,47 @@ jobs:
             | grep -q "Developer ID Application" \
             || { echo "::error::No Developer ID Application identity in the keychain"; exit 1; }
 
+      # Apple rejects bad notary credentials in seconds. Doing it here means a
+      # wrong secret fails immediately instead of after a full signed build,
+      # and says which of the three inputs to look at.
+      - name: Verify notary credentials
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          fail=0
+          for name in NOTARY_APPLE_ID NOTARY_PASSWORD NOTARY_TEAM_ID; do
+            # Indirect expansion, not $(...) — command substitution strips the
+            # trailing newline this check exists to catch. And a `case` glob,
+            # not grep, because grep is line-oriented and never sees a
+            # trailing newline as content.
+            value="${!name}"
+            if [ -z "$value" ]; then
+              echo "::error::$name is empty or unset"
+              fail=1
+              continue
+            fi
+            case "$value" in
+              *[[:space:]]*)
+                echo "::error::$name contains whitespace. A trailing newline from 'echo | gh secret set' is the usual cause - use printf instead."
+                fail=1
+                ;;
+            esac
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          if ! xcrun notarytool history --apple-id "$NOTARY_APPLE_ID" \
+                 --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD" \
+                 >/dev/null 2>notary-err.txt; then
+            echo "::error::Apple rejected the notary credentials."
+            sed 's/^/  /' notary-err.txt
+            echo "NOTARY_PASSWORD must be an app-specific password from appleid.apple.com,"
+            echo "not your Apple ID password. NOTARY_APPLE_ID must be the Apple ID that"
+            echo "generated it, and NOTARY_TEAM_ID must be B2DYXY7U9Y."
+            exit 1
+          fi
+          echo "Notary credentials accepted."
+
       - name: Build, sign, package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
