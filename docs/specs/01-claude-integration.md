@@ -54,7 +54,7 @@ The binary contains `control_request`, `control_response`, `control_cancel_reque
 
 ### 0.3 Session storage format [verified by reading real files]
 
-- Path: `~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl` where `<encoded-cwd>` = absolute cwd with every non-alphanumeric char replaced by `-` (e.g. `/Volumes/MainOBP/Dev/dungeonmaster` → `-Volumes-MainOBP-Dev-dungeonmaster`); names >200 chars are truncated + hashed [verified: docs + on-disk]. `CLAUDE_CONFIG_DIR` relocates the whole tree [verified: docs].
+- Path: `~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl` where `<encoded-cwd>` = absolute cwd with every non-alphanumeric char replaced by `-` (e.g. `/Users/you/Dev/myapp` → `-Users-you-Dev-myapp`); names >200 chars are truncated + hashed [verified: docs + on-disk]. `CLAUDE_CONFIG_DIR` relocates the whole tree [verified: docs].
 - Beside each `.jsonl`: a sidecar directory `<session-uuid>/` containing `subagents/`, `tool-results/` (large tool outputs spilled to files), `workflows/`; plus a shared `memory/` dir per project [verified on disk].
 - Also relevant: `~/.claude/history.jsonl` (one line per submitted prompt: `{display, pastedContents, timestamp, project, sessionId}`) — a cheap global "recent activity" feed for home-screen tiles [verified].
 - The `.jsonl` is **not** the same schema as stream-json output. It is a superset/envelope. Observed line `type`s [verified]:

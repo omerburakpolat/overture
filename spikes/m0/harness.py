@@ -11,12 +11,16 @@ under fixtures/ for later golden tests in ClaudeKit.
 
 Usage: python3 harness.py <scenario> [...]   (or `all`)
 """
-import json, os, subprocess, sys, threading, time, uuid, queue, pathlib, shutil
+import json, os, subprocess, sys, tempfile, threading, time, uuid, queue, pathlib, shutil
 
 CLAUDE = shutil.which("claude") or "/opt/homebrew/bin/claude"
 ROOT = pathlib.Path(__file__).resolve().parent
 FIXTURES = ROOT / "fixtures"
-WORK = pathlib.Path("/private/tmp/claude-501/-Volumes-MainOBP-Dev-dungeonmaster/fef85559-54ad-4f6e-a528-5768f2f4cda1/scratchpad/m0-work")
+# Scratch repos for the scenarios. Override with M0_WORK_DIR; the default
+# is a temp dir so this runs on any machine, not just the one that
+# recorded the fixtures.
+WORK = pathlib.Path(os.environ.get(
+    "M0_WORK_DIR", tempfile.gettempdir() + "/overture-m0-work"))
 MODEL = "haiku"  # cheapest; protocol shape is model-independent
 
 

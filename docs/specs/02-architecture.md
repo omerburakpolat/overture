@@ -13,7 +13,7 @@ depends on them.
 
 **Target:** macOS 26+ (Tahoe), Apple Silicon only. Swift 6.2 language mode, strict concurrency (`SWIFT_STRICT_CONCURRENCY=complete`). SwiftUI + Liquid Glass. Open source (MIT).
 
-**Verified machine facts used below:** `claude` CLI v2.1.231 supports `-p --output-format stream-json --include-partial-messages`, `--input-format stream-json`, `--session-id <uuid>`, `--resume <id>`, `--fork-session`, `--permission-mode {acceptEdits|auto|bypassPermissions|manual|dontAsk|plan}`, `--max-budget-usd`, `--replay-user-messages`. Transcripts live at `~/.claude/projects/<munged-cwd>/<session-uuid>.jsonl` (cwd munged by replacing `/` with `-`, e.g. `/Volumes/MainOBP/Dev/dungeonmaster` → `-Volumes-MainOBP-Dev-dungeonmaster`).
+**Verified machine facts used below:** `claude` CLI v2.1.231 supports `-p --output-format stream-json --include-partial-messages`, `--input-format stream-json`, `--session-id <uuid>`, `--resume <id>`, `--fork-session`, `--permission-mode {acceptEdits|auto|bypassPermissions|manual|dontAsk|plan}`, `--max-budget-usd`, `--replay-user-messages`. Transcripts live at `~/.claude/projects/<munged-cwd>/<session-uuid>.jsonl` (cwd munged by replacing `/` with `-`, e.g. `/Users/you/Dev/myapp` → `-Users-you-Dev-myapp`).
 
 ---
 
