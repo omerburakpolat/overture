@@ -336,9 +336,14 @@ private func makeCard(_ context: ModelContext, _ project: Project,
 }
 
 @Suite struct DevServerManagerTests {
-    @Test(.timeLimit(.minutes(1)))
+    // 45s, not 20s: a login shell on a cold CI runner spends ~10s sourcing
+    // its profile before python is even reached, and that stretches further
+    // under swift test's parallel load. Measured on macos-26: the port opened
+    // at 12s with the machine otherwise idle. The timeout is a ceiling, not a
+    // wait — a ready server still returns in well under a second locally.
+    @Test(.timeLimit(.minutes(2)))
     func startsProbesAndStops() async throws {
-        let manager = DevServerManager(readinessTimeout: .seconds(20))
+        let manager = DevServerManager(readinessTimeout: .seconds(45))
         let key = UUID()
         let directory = FileManager.default.temporaryDirectory
         // {port} template substitution is the contract (resolution #26).
