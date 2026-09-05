@@ -16,6 +16,7 @@ struct CardDetailView: View {
     enum Tab: String, CaseIterable {
         case chat = "Chat"
         case diff = "Diff"
+        case preview = "Preview"
         case tests = "Tests"
         case activity = "Activity"
     }
@@ -27,6 +28,7 @@ struct CardDetailView: View {
             switch tab {
             case .chat: ChatTab(card: card, store: store)
             case .diff: DiffTab(card: card)
+            case .preview: PreviewTab(card: card, store: store)
             case .tests: TestsTab(card: card)
             case .activity: ActivityTab(card: card)
             }
@@ -70,7 +72,7 @@ struct CardDetailView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 300)
+            .frame(width: 380)
         }
         .padding(DS.Space.s400)
     }

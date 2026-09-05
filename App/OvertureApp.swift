@@ -7,6 +7,7 @@ import ProcessCore
 @main
 struct OvertureApp: App {
     @State private var appState = try? AppState()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         WindowGroup(id: "main") {
@@ -37,6 +38,49 @@ struct OvertureApp: App {
         }
         .menuBarExtraStyle(.window)
     }
+
+}
+
+/// Quit flow (resolution #7): with agents running, offer Interrupt & Quit
+/// (≤10 s grace) or Cancel; dev servers always stop — nothing survives quit.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var shared: AppDelegate?
+    weak var state: AppState?
+
+    override init() {
+        super.init()
+        Self.shared = self
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication)
+        -> NSApplication.TerminateReply {
+        guard let state else { return .terminateNow }
+        let liveCount = state.coordinator.live.values.filter {
+            $0.activity == .working || $0.activity == .needsInput
+        }.count
+        if liveCount > 0 {
+            let alert = NSAlert()
+            alert.messageText = liveCount == 1
+                ? "An agent is still running"
+                : "\(liveCount) agents are still running"
+            alert.informativeText = "Overture will interrupt them cleanly; "
+                + "every session can be resumed later from its card."
+            alert.addButton(withTitle: "Interrupt & Quit")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() != .alertFirstButtonReturn {
+                return .terminateCancel
+            }
+        }
+        Task {
+            _ = await state.services.processManager.interruptAndQuit()
+            await state.devServers.stopAll()
+            await MainActor.run {
+                NSApplication.shared.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
 }
 
 /// Root composition: services + stores, built once.
@@ -50,6 +94,7 @@ final class AppState {
     /// Card a notification/menu-bar click wants opened (BoardView consumes).
     var pendingCardFocus: UUID?
     var notificationManager: NotificationManager?
+    let devServers = DevServerManager()
 
     init() throws {
         services = try AppServices()
@@ -78,6 +123,7 @@ struct RootView: View {
                 }
         }
         .task {
+            AppDelegate.shared?.state = appState
             await appState.services.runOnboarding()
             _ = await appState.services.reconcileOrphans()
             onboardingDone = true

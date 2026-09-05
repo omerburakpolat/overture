@@ -334,3 +334,37 @@ private func makeCard(_ context: ModelContext, _ project: Project,
         #expect(outcome.summary == "No verdict reported")
     }
 }
+
+@Suite struct DevServerManagerTests {
+    @Test(.timeLimit(.minutes(1)))
+    func startsProbesAndStops() async throws {
+        let manager = DevServerManager(readinessTimeout: .seconds(20))
+        let key = UUID()
+        let directory = FileManager.default.temporaryDirectory
+        // {port} template substitution is the contract (resolution #26).
+        let handle = try await manager.start(
+            key: key,
+            commandTemplate: "python3 -m http.server {port} --bind 127.0.0.1",
+            basePort: 8930 + Int.random(in: 0..<50),
+            directory: directory)
+        #expect(handle.url.absoluteString.hasPrefix("http://localhost:"))
+        // Reuse: same key returns the same handle without respawning.
+        let again = try await manager.start(
+            key: key, commandTemplate: "irrelevant", basePort: 1,
+            directory: directory)
+        #expect(again == handle)
+        let (_, response) = try await URLSession.shared.data(from: handle.url)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        await manager.stop(key: key)
+        #expect(await manager.handle(for: key) == nil)
+    }
+
+    @Test func emptyCommandFailsFast() async {
+        let manager = DevServerManager()
+        await #expect(throws: DevServerManager.ServerError.self) {
+            _ = try await manager.start(
+                key: UUID(), commandTemplate: "  ", basePort: 3000,
+                directory: FileManager.default.temporaryDirectory)
+        }
+    }
+}
