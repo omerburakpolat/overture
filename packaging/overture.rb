@@ -5,10 +5,10 @@ cask "overture" do
   version "0.1.0"
   sha256 "REPLACE_WITH_DMG_SHA256"
 
-  url "https://github.com/OWNER/overture/releases/download/v#{version}/Overture-#{version}.dmg"
+  url "https://github.com/omerburakpolat/overture/releases/download/v#{version}/Overture-#{version}.dmg"
   name "Overture"
   desc "Kanban harness for Claude Code — cards are agent sessions that move themselves"
-  homepage "https://github.com/OWNER/overture"
+  homepage "https://github.com/omerburakpolat/overture"
 
   auto_updates true # Sparkle
   depends_on macos: ">= :tahoe"

@@ -5,18 +5,16 @@
 	<!-- Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE=YES);
 	     only custom keys live here. -->
 
-	<!-- Sparkle: appcast published by the release workflow. Automatic
-	     checks stay OFF until the first real release ships a signed
-	     appcast; the menu item still allows manual checks. -->
+	<!-- Sparkle: the release workflow uploads appcast.xml to every GitHub
+	     release; /latest/download/ keeps the URL stable. -->
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/OWNER/overture/main/appcast.xml</string>
+	<string>https://github.com/omerburakpolat/overture/releases/latest/download/appcast.xml</string>
 	<key>SUEnableAutomaticChecks</key>
-	<false/>
-	<!-- EdDSA public key for update signing — generated once with
-	     Sparkle's generate_keys at first release (docs/RELEASING.md);
-	     the private half lives ONLY in CI secrets. -->
+	<true/>
+	<!-- EdDSA public key for update signing; the private half lives in the
+	     login keychain and the SPARKLE_ED_PRIVATE_KEY CI secret. -->
 	<key>SUPublicEDKey</key>
-	<string>REPLACE-WITH-GENERATED-PUBLIC-KEY</string>
+	<string>sLbuExZ5DyeckyUfd35UsH0g8WS3SY4DVbFuguY+3p8=</string>
 
 	<!-- Deep links from notifications (overture://card/<uuid>). -->
 	<key>CFBundleURLTypes</key>
