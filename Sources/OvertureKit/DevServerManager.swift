@@ -76,19 +76,20 @@ public actor DevServerManager {
             await self?.serverExited(key: key)
         }
 
-        // Readiness: TCP connect probe (works for every stack; readyPattern
-        // matching can refine this later).
+        // Readiness: HTTP probe until the deadline.
         let deadline = ContinuousClock.now + readinessTimeout
         while ContinuousClock.now < deadline {
             if await Self.canConnect(port: port) { return handle }
-            if servers[key] == nil {
-                throw ServerError.neverBecameReady(
-                    consoleTail: consoleTail(key: key))
-            }
+            if servers[key] == nil { break }   // server exited early
             try? await Task.sleep(for: .milliseconds(400))
         }
+        // Shell-level failures (command not found) land on the child's OWN
+        // stderr, not the command's redirected one — include both tails so
+        // the error explains itself.
+        let diagnostics = consoleTail(key: key)
+            + (await subprocess.stderrSnapshot())
         await stop(key: key)
-        throw ServerError.neverBecameReady(consoleTail: consoleTail(key: key))
+        throw ServerError.neverBecameReady(consoleTail: diagnostics)
     }
 
     public func handle(for key: UUID) -> ServerHandle? {
