@@ -56,5 +56,12 @@ if codesign --display --entitlements - "$APP" 2>/dev/null \
 fi
 codesign --display --verbose=2 "$APP" 2>&1 | grep -E 'Authority|flags' | head -3
 "$ROOT/scripts/make-dmg.sh" "$APP" "$ROOT/build/Overture-$VERSION.dmg"
+# Sign the disk image itself, not just the app inside it. Without this the
+# DMG carries only a stapled notarization ticket, and `spctl --context
+# context:primary-signature` reports "rejected: no usable signature" on a
+# perfectly good build — which reads as a compromised download to anyone
+# who checks. Must happen before notarization so the staple covers it.
+codesign -f --timestamp -s "$IDENTITY" "$ROOT/build/Overture-$VERSION.dmg"
+codesign --verify --strict "$ROOT/build/Overture-$VERSION.dmg"
 echo "DMG: $ROOT/build/Overture-$VERSION.dmg"
 echo "Next (distribution builds): scripts/notarize.sh build/Overture-$VERSION.dmg"

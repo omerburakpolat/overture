@@ -26,7 +26,14 @@ Every release is signed with a Developer ID certificate and notarized by Apple,
 so Gatekeeper opens it without a warning. Verify for yourself if you like:
 
 ```bash
-spctl -a -vvv -t open --context context:primary-signature ~/Downloads/Overture-*.dmg
+xcrun stapler validate ~/Downloads/Overture-0.1.0.dmg
+```
+
+That confirms Apple's notarization ticket is attached to the image. Once you
+have copied the app across, this checks the app Gatekeeper will actually run:
+
+```bash
+spctl -a -vvv -t exec /Applications/Overture.app
 ```
 
 ### Requirements

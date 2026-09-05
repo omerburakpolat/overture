@@ -3,7 +3,7 @@
 # per release.
 cask "overture" do
   version "0.1.0"
-  sha256 "REPLACE_WITH_DMG_SHA256"
+  sha256 "7d275fabe49e68f786458e05408e8bfd69ea14546f85bdac4c9115de84b0b2b1"
 
   url "https://github.com/omerburakpolat/overture/releases/download/v#{version}/Overture-#{version}.dmg"
   name "Overture"
