@@ -26,3 +26,6 @@ sparkle_private_key*
 
 # Release artifacts
 build/
+
+# Release staging (scripts/release.sh + generate_appcast output)
+dist/
