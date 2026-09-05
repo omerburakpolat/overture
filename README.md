@@ -11,11 +11,12 @@ a Done card flies back to In Progress.
 
 - **Native**: Swift 6 / SwiftUI, macOS 26+ (Apple Silicon), Liquid Glass design
   language, a single third-party dependency (Sparkle, for updates).
-- **Integrations at launch**: Claude Code, GitHub (via `gh`), Vercel.
+- **Integrations at launch**: Claude Code and GitHub (via `gh`). A Vercel
+  deployment-status integration is built (VercelKit) and lands post-launch.
 - **Execution modes per project**: a git worktree per card (parallel agents,
   branch + PR per card) or single-directory with a visible queue.
-- **Testing built in**: a Testing column, an embedded preview pane (local dev
-  server or Vercel preview), and agent-driven test runs with structured verdicts.
+- **Testing built in**: a Testing column, an embedded preview pane running the
+  card's own worktree code, and agent-driven test runs with strict verdicts.
 
 Overture drives **your own installed `claude` CLI with your own login** — it
 never bundles, redistributes, or proxies Claude Code or your credentials
@@ -33,6 +34,9 @@ Design and architecture specs live in [docs/specs/](docs/specs/):
 | [03-design-system.md](docs/specs/03-design-system.md) | OvertureDesign: tokens, color, type, motion, components, accessibility |
 | [04-product-behavior.md](docs/specs/04-product-behavior.md) | Kanban mechanics, card lifecycle, drag matrix, testing & review flows |
 | [05-review.md](docs/specs/05-review.md) | Adversarial review of the above (defects → resolutions) |
+| [06-m0-findings.md](docs/specs/06-m0-findings.md) | Protocol spike results — every claim proven against the live CLI |
+
+Release process: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## License
 

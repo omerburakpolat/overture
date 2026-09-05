@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE=YES);
+	     only custom keys live here. -->
+
+	<!-- Sparkle: appcast published by the release workflow. Automatic
+	     checks stay OFF until the first real release ships a signed
+	     appcast; the menu item still allows manual checks. -->
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/OWNER/overture/main/appcast.xml</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<!-- EdDSA public key for update signing — generated once with
+	     Sparkle's generate_keys at first release (docs/RELEASING.md);
+	     the private half lives ONLY in CI secrets. -->
+	<key>SUPublicEDKey</key>
+	<string>REPLACE-WITH-GENERATED-PUBLIC-KEY</string>
+
+	<!-- Deep links from notifications (overture://card/<uuid>). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.overture.Overture</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>overture</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -1,4 +1,5 @@
 import SwiftUI
+import Sparkle
 import OvertureDesign
 import OvertureKit
 import ClaudeKit
@@ -8,6 +9,10 @@ import ProcessCore
 struct OvertureApp: App {
     @State private var appState = try? AppState()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// Sparkle. Automatic checks are disabled via Info.plist until the
+    /// first release ships a real appcast; manual checks work now.
+    private let updater = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     var body: some Scene {
         WindowGroup(id: "main") {
@@ -24,6 +29,9 @@ struct OvertureApp: App {
             .frame(minWidth: 960, minHeight: 620)
             .background(DS.Color.Surface.canvas)
         }
+        .commands {
+            CheckForUpdatesCommand(updater: updater.updater)
+        }
 
         Settings {
             if let appState {
@@ -39,6 +47,19 @@ struct OvertureApp: App {
         .menuBarExtraStyle(.window)
     }
 
+}
+
+struct CheckForUpdatesCommand: Commands {
+    let updater: SPUUpdater
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                updater.checkForUpdates()
+            }
+            .disabled(!updater.canCheckForUpdates)
+        }
+    }
 }
 
 /// Quit flow (resolution #7): with agents running, offer Interrupt & Quit

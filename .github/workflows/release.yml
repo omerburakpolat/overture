@@ -1,0 +1,74 @@
+name: Release
+
+# Tag push (v*) → signed, notarized DMG + appcast on the GitHub release.
+# Required repository secrets (docs/RELEASING.md):
+#   MACOS_CERT_P12         base64 Developer ID Application cert + key
+#   MACOS_CERT_PASSWORD    p12 password
+#   NOTARY_APPLE_ID        Apple ID email
+#   NOTARY_PASSWORD        app-specific password
+#   NOTARY_TEAM_ID         e.g. B2DYXY7U9Y
+#   SPARKLE_ED_PRIVATE_KEY EdDSA private key from Sparkle's generate_keys
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Import signing certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN=build.keychain
+          security create-keychain -p ci "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p ci "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > cert.p12
+          security import cert.p12 -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci \
+            "$KEYCHAIN" > /dev/null
+          rm cert.p12
+
+      - name: Build, sign, package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          scripts/release.sh "$VERSION"
+
+      - name: Notarize
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          xcrun notarytool store-credentials overture-notary \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD"
+          scripts/notarize.sh "build/Overture-$VERSION.dmg"
+
+      - name: Generate appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          BIN=".build-app/SourcePackages/artifacts/sparkle/Sparkle/bin"
+          [ -d "$BIN" ] || BIN="$(find ~/Library/Developer -type d \
+            -path '*artifacts/sparkle/Sparkle/bin' 2>/dev/null | head -1)"
+          echo "$SPARKLE_ED_PRIVATE_KEY" | "$BIN/generate_appcast" \
+            --ed-key-file - build/
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/Overture-*.dmg
+            build/appcast.xml
+          generate_release_notes: true

@@ -23,3 +23,6 @@ sparkle_private_key*
 
 # Per-agent SPM scratch dirs
 .build*/
+
+# Release artifacts
+build/

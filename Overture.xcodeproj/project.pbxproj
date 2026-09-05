@@ -9,10 +9,23 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A100000000000000000000A1 /* App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A100000000000000000000A2 /* Exceptions for "App" folder */,
+			);
 			path = App;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A100000000000000000000A2 /* Exceptions for "App" folder */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A100000000000000000000B0 /* Overture */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXGroup section */
 		A100000000000000000000A0 = {
@@ -48,6 +61,7 @@
 				A100000000000000000000D4 /* GitKit */,
 				A100000000000000000000D5 /* VercelKit */,
 				A100000000000000000000D6 /* ProcessCore */,
+				A100000000000000000000D7 /* Sparkle */,
 			);
 			productName = Overture;
 			productReference = A100000000000000000000B9 /* Overture.app */;
@@ -77,6 +91,7 @@
 			mainGroup = A100000000000000000000A0;
 			packageReferences = (
 				A100000000000000000000D0 /* XCLocalSwiftPackageReference "." */,
+				A100000000000000000000E1 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A100000000000000000000A0;
@@ -130,6 +145,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Overture;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -159,6 +175,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Overture;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -234,6 +251,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A100000000000000000000E1 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.7.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A100000000000000000000D1 /* OvertureKit */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -258,6 +286,11 @@
 		A100000000000000000000D6 /* ProcessCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ProcessCore;
+		};
+		A100000000000000000000D7 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A100000000000000000000E1 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
