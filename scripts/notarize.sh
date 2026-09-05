@@ -10,8 +10,10 @@ PROFILE="${OVERTURE_NOTARY_PROFILE:-overture-notary}"
 
 RESULT="$(xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" \
   --wait --output-format json)"
-SUBMISSION_ID="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-STATUS="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+# plutil parses JSON and ships with macOS; python3 is not guaranteed on a
+# clean runner, and a release must not die on a missing interpreter.
+SUBMISSION_ID="$(printf '%s' "$RESULT" | plutil -extract id raw -o - -)"
+STATUS="$(printf '%s' "$RESULT" | plutil -extract status raw -o - -)"
 echo "Submission $SUBMISSION_ID: $STATUS"
 if [ "$STATUS" != "Accepted" ]; then
   xcrun notarytool log "$SUBMISSION_ID" --keychain-profile "$PROFILE" || true
