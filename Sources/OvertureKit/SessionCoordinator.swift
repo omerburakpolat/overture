@@ -656,7 +656,13 @@ public final class SessionCoordinator {
             // interjection line; only genuine failures get a row.
             let interrupted = card.subState == .interrupted
                 || (result.isError && interruptsPending.contains(cardID))
-            if result.isError { interruptsPending.remove(cardID) }
+            // Consumed by whichever result arrives first, however it ended. A
+            // Stop that raced the turn finishing cleanly used to leave the flag
+            // set for the life of the process — the supervisor outlives a turn,
+            // so the *next* genuine failure was then silently misread as that
+            // interrupt: no "Run stopped" row, no notification, and a card left
+            // in an error sub-state with nothing to explain it.
+            interruptsPending.remove(cardID)
             let buildEnded = runKind == .autonomousRun
                 && card.column == .inProgress   // mirrors BoardEngine's guard
             if buildEnded, !interrupted {
