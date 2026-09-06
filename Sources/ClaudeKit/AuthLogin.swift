@@ -27,7 +27,7 @@ public actor AuthLogin {
         let child = Subprocess(configuration: .init(
             executable: claudeURL,
             arguments: ["auth", "login", mode.rawValue],
-            strippedEnvPrefixes: ClaudeCLI.strippedEnvPrefixes))
+            environment: ClaudeChildEnvironment.make()))
         subprocess = child
         let (stream, continuation) = AsyncStream.makeStream(of: Event.self)
         let lines = try await child.start()

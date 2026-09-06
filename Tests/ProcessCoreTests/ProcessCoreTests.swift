@@ -50,15 +50,16 @@ import Testing
         #expect(await subprocess.stderrSnapshot().contains("oops"))
     }
 
-    @Test func envPrefixStripping() async throws {
+    /// The child gets exactly the dictionary it was handed — no filtering
+    /// hook, so callers own what they pass (see `ClaudeChildEnvironment`).
+    @Test func environmentIsPassedVerbatim() async throws {
         let subprocess = Subprocess(configuration: .init(
             executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "echo \"[$CLAUDETEST_X]\""],
-            environment: ["CLAUDETEST_X": "leak", "PATH": "/usr/bin:/bin"],
-            strippedEnvPrefixes: ["CLAUDE"]))
+            arguments: ["-c", "echo \"[$KEPT][$ABSENT]\""],
+            environment: ["KEPT": "yes", "PATH": "/usr/bin:/bin"]))
         var lines: [String] = []
         for await line in try await subprocess.start() { lines.append(line) }
-        #expect(lines == ["[]"])
+        #expect(lines == ["[yes][]"])
     }
 
     @Test func pidLivenessGuardsAgainstReuse() {

@@ -115,6 +115,14 @@ substitute for not writing the secret down.
   states this publicly, so a violation makes the project dishonest, not just
   buggy.
 - **No telemetry, no analytics, no backend.** Also a public SECURITY.md claim.
+- **One place builds the child environment**: `ClaudeChildEnvironment.make()`.
+  It strips nested-session markers **by exact name, never by prefix** — a
+  `CLAUDE` prefix sweep also removes `CLAUDE_CONFIG_DIR` (which selects the
+  credential store *and* the transcript directory), the
+  `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switches, and
+  `CLAUDE_CODE_OAUTH_TOKEN`, silently breaking those users. `Subprocess` passes
+  `environment` through verbatim and has no filtering hook, so the caller is
+  always the one deciding.
 
 ### Running your build
 

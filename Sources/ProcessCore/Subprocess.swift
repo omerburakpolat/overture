@@ -22,22 +22,23 @@ public actor Subprocess {
         public var executable: URL
         public var arguments: [String]
         public var currentDirectory: URL?
-        /// Environment for the child. `nil` inherits the parent environment.
+        /// Environment for the child, verbatim. `nil` inherits the parent
+        /// environment unchanged.
+        ///
+        /// There is deliberately no filtering hook here: callers that need to
+        /// drop variables build the dictionary themselves, so exactly one
+        /// place decides what a child inherits. For `claude` children that
+        /// place is `ClaudeKit.ClaudeChildEnvironment.make(...)`.
         public var environment: [String: String]?
-        /// Env var name prefixes stripped from the inherited/child env.
-        /// Overture strips `CLAUDE` so nested sessions don't leak context.
-        public var strippedEnvPrefixes: [String]
 
         public init(executable: URL,
                     arguments: [String] = [],
                     currentDirectory: URL? = nil,
-                    environment: [String: String]? = nil,
-                    strippedEnvPrefixes: [String] = []) {
+                    environment: [String: String]? = nil) {
             self.executable = executable
             self.arguments = arguments
             self.currentDirectory = currentDirectory
             self.environment = environment
-            self.strippedEnvPrefixes = strippedEnvPrefixes
         }
     }
 
@@ -82,11 +83,8 @@ public actor Subprocess {
         if let cwd = configuration.currentDirectory {
             process.currentDirectoryURL = cwd
         }
-        var env = configuration.environment ?? ProcessInfo.processInfo.environment
-        for prefix in configuration.strippedEnvPrefixes {
-            env = env.filter { !$0.key.hasPrefix(prefix) }
-        }
-        process.environment = env
+        process.environment = configuration.environment
+            ?? ProcessInfo.processInfo.environment
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe

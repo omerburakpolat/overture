@@ -102,14 +102,12 @@ public actor CardSupervisor {
     /// startup is silent until the first user message).
     public func start() async throws -> AsyncStream<SupervisorEvent> {
         guard subprocess == nil else { throw SupervisorError.alreadyStarted }
-        var env = ProcessInfo.processInfo.environment
-        for (key, value) in context.envMarkers { env[key] = value }
         let child = Subprocess(configuration: .init(
             executable: context.claudeExecutable,
             arguments: ClaudeCLI.streamingArguments(for: context.spec),
             currentDirectory: context.workingDirectory,
-            environment: env,
-            strippedEnvPrefixes: ClaudeCLI.strippedEnvPrefixes))
+            environment: ClaudeChildEnvironment.make(
+                markers: context.envMarkers)))
         subprocess = child
 
         let (stream, continuation) = AsyncStream.makeStream(

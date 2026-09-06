@@ -34,7 +34,7 @@ public enum TicketDrafter {
             executable: claudeURL,
             arguments: arguments,
             currentDirectory: URL(fileURLWithPath: projectPath),
-            strippedEnvPrefixes: ClaudeCLI.strippedEnvPrefixes))
+            environment: ClaudeChildEnvironment.make()))
         guard let lines = try? await subprocess.start() else { return nil }
         var output: [String] = []
         for await line in lines { output.append(line) }

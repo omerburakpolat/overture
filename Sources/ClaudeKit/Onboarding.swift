@@ -66,7 +66,7 @@ public enum OnboardingCheck {
                                 _ arguments: [String]) async -> String? {
         let subprocess = Subprocess(configuration: .init(
             executable: executable, arguments: arguments,
-            strippedEnvPrefixes: ClaudeCLI.strippedEnvPrefixes))
+            environment: ClaudeChildEnvironment.make()))
         guard let lines = try? await subprocess.start() else { return nil }
         var collected: [String] = []
         for await line in lines { collected.append(line) }

@@ -144,10 +144,6 @@ public enum ClaudeCLI {
         return args
     }
 
-    /// Env prefixes stripped from every claude child (M0 finding #10:
-    /// nested-session context must not leak).
-    public static let strippedEnvPrefixes = ["CLAUDE"]
-
     /// Default allow rules for autonomous execution runs: local git
     /// bookkeeping never stalls a build. Deliberately excludes anything that
     /// leaves the machine (`push`, `fetch`, remotes) — those still surface.
