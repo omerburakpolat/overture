@@ -81,6 +81,42 @@ private func date(_ iso: String) -> Date {
         #expect(entries.last?.isPending == true)
     }
 
+    @Test func provisionalUserRowsMatchTheirTranscriptTwinByTextAndTime() {
+        // The transcript already holds the message (it is written at turn
+        // start) but the uuid-carrying echo has not arrived: one row, not
+        // a confirmed one plus a dimmed twin.
+        let sent = date("2026-09-01T10:00:00Z").addingTimeInterval(-0.5)
+        let live: [LiveChatItem] = [
+            .init(id: LiveChatItem.provisionalPrefix + "p", kind: .user,
+                  text: "Fix the crash", at: sent),
+        ]
+        let entries = CardThread.entries(history: history, live: live)
+        #expect(entries.map(\.id) == ["u1", "a1", "t1", "a2"])
+    }
+
+    @Test func repeatedIdenticalMessagesStayOneToOne() {
+        // Two "yes" sent, one on disk so far: exactly one stays pending.
+        let base = date("2026-09-01T11:00:00Z")
+        let items = TranscriptReader.items(fromJSONL: jsonl([
+            userLine(uuid: "y1", parent: nil, text: "yes",
+                     at: "2026-09-01T11:00:00Z"),
+        ]))
+        let live: [LiveChatItem] = [
+            .init(id: LiveChatItem.provisionalPrefix + "1", kind: .user,
+                  text: "yes", at: base.addingTimeInterval(-1)),
+            .init(id: LiveChatItem.provisionalPrefix + "2", kind: .user,
+                  text: "yes", at: base.addingTimeInterval(30)),
+        ]
+        let entries = CardThread.entries(history: items, live: live)
+        #expect(entries.map(\.id) == ["y1", "live-local-2"])
+        // A row written long before the message was sent is not its twin.
+        let stale: [LiveChatItem] = [
+            .init(id: LiveChatItem.provisionalPrefix + "3", kind: .user,
+                  text: "yes", at: base.addingTimeInterval(3600)),
+        ]
+        #expect(CardThread.entries(history: items, live: stale).count == 2)
+    }
+
     @Test func activityAndTestRunsInterleaveByTime() {
         let events = [
             ActivityRow(at: date("2026-09-01T10:00:06Z"), kind: .columnChanged,
@@ -287,7 +323,9 @@ private func date(_ iso: String) -> Date {
         card.details = "Steps:\n- one\n"
         #expect(store.updateTicket(card, title: "Renamed", details: card.details,
                                    tags: card.tags))
-        #expect(card.events.last?.summary == "Edited title")
+        // Relationship arrays are unordered — look for the row, not at .last.
+        let edits = card.events.filter { $0.kind == .ticketEdited }
+        #expect(edits.map(\.summary) == ["Edited title"])
     }
 
     @Test func overlongTitlesAreRejectedWithAToast() throws {

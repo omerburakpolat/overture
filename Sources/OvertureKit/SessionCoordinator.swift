@@ -95,21 +95,38 @@ public final class SessionCoordinator {
             // card's one primary thread (spec 04 §4), so flip it into plan
             // mode rather than spawning a second one for the same card.
             await redirect(supervisor, card: card, mode: .plan,
-                           runKind: .planning, message: prompt)
+                           runKind: .planning, message: prompt,
+                           interruptInFlight: true)
             return
         }
         await spawn(card: card, project: project, profile: .plan,
                     runKind: .planning, kind: .plan, initialMessage: prompt)
     }
 
-    /// Re-points a live primary process at a new run kind: interrupts a
-    /// turn in flight, flips the permission posture, records the start, and
-    /// sends the message that begins the new run.
+    /// Cards whose in-flight turn Overture itself cut short (Stop, or a
+    /// redirect): the error result that follows is not a failure to report.
+    private var interruptsPending: Set<UUID> = []
+
+    /// Re-points a live primary process at a new run kind: optionally cuts
+    /// short a turn in flight, flips the permission posture, records the
+    /// start, and sends the message that begins the new run.
+    ///
+    /// `interruptInFlight` is false for the plan→build flip: after an
+    /// ExitPlanMode allow the turn in flight already IS the build (spec 04
+    /// §6, same session and context), so the message steers it (§7.3)
+    /// instead of aborting it. When a turn is cut short, the flip waits for
+    /// its error result so that result still carries the old run kind.
     private func redirect(_ supervisor: CardSupervisor, card: Card,
                           mode: ClaudeCLI.PermissionProfile, runKind: RunKind,
-                          message: String) async {
-        if await supervisor.activity == .working {
+                          message: String, interruptInFlight: Bool) async {
+        if interruptInFlight, await supervisor.activity == .working {
+            interruptsPending.insert(card.id)
             try? await supervisor.interrupt(cancelQueued: true)
+            let deadline = ContinuousClock.now + .seconds(5)
+            while await supervisor.activity == .working,
+                  ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
         }
         try? await supervisor.setPermissionMode(mode.modeFlag,
                                                 newRunKind: runKind)
@@ -146,7 +163,8 @@ public final class SessionCoordinator {
                            runKind: .autonomousRun,
                            message: wasPlanning
                                ? "The plan is approved — implement it now."
-                               : continuation)
+                               : continuation,
+                           interruptInFlight: !wasPlanning)
             return
         }
         let message = card.sessions.contains(where: { $0.role == .primary })
@@ -279,6 +297,7 @@ public final class SessionCoordinator {
     public func interrupt(card: Card) async {
         guard let supervisor = await services.processManager
             .supervisor(for: card.id) else { return }
+        interruptsPending.insert(card.id)
         try? await supervisor.interrupt(cancelQueued: true)
         try? BoardEngine.apply(.interrupted, to: card, in: context)
         try? context.save()
@@ -636,6 +655,8 @@ public final class SessionCoordinator {
             // A user interrupt already shows as the transcript's own
             // interjection line; only genuine failures get a row.
             let interrupted = card.subState == .interrupted
+                || (result.isError && interruptsPending.contains(cardID))
+            if result.isError { interruptsPending.remove(cardID) }
             let buildEnded = runKind == .autonomousRun
                 && card.column == .inProgress   // mirrors BoardEngine's guard
             if buildEnded, !interrupted {
@@ -686,6 +707,7 @@ public final class SessionCoordinator {
             }
             live[cardID]?.activity = .ended(exit)
             live[cardID]?.streamingText = ""
+            interruptsPending.remove(cardID)
             live[cardID, default: .init()].historyGeneration += 1
             for session in card.sessions where session.exitReason == nil {
                 session.endedAt = .now

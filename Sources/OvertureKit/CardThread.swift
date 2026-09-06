@@ -167,10 +167,31 @@ public enum CardThread {
                                     at: run.finishedAt ?? run.startedAt,
                                     kind: .testRun(run)))
         }
+        // Provisional user rows: the CLI's replay echo (which carries the
+        // uuid) is deferred until the turn's first API response, but the
+        // transcript line is on disk milliseconds after `system/init` —
+        // exactly when history reloads. Until the echo lands (or never, if
+        // the process died mid-turn), match by text and time, consuming
+        // each transcript row once so a repeated "yes" stays one-to-one.
+        var unclaimedUserRows: [(text: String, at: Date)] = digest.rows.compactMap {
+            guard case .user(let text) = $0.kind, let at = $0.at else { return nil }
+            return (text.trimmingCharacters(in: .whitespacesAndNewlines), at)
+        }
         for item in live {
             if seenIDs.contains(item.id) { continue }
             if case .toolUse = item.kind, seenToolIDs.contains(item.id) {
                 continue
+            }
+            if item.kind == .user, item.isProvisional {
+                let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let match = unclaimedUserRows.firstIndex(where: {
+                    $0.text == text
+                        && $0.at >= item.at.addingTimeInterval(-echoSlack)
+                        && $0.at <= item.at.addingTimeInterval(echoWindow)
+                }) {
+                    unclaimedUserRows.remove(at: match)
+                    continue
+                }
             }
             rows.append(ThreadEntry(id: "live-\(item.id)", at: item.at,
                                     kind: kind(for: item), isPending: true))
@@ -183,6 +204,11 @@ public enum CardThread {
             return l == r ? lhs.offset < rhs.offset : l < r
         }.map(\.element)
     }
+
+    /// Clock slack between Overture appending a row and the CLI stamping
+    /// its transcript line, and how long a row may wait for its twin.
+    static let echoSlack: TimeInterval = 2
+    static let echoWindow: TimeInterval = 10 * 60
 
     static func kind(for item: TranscriptItem) -> ThreadEntry.Kind? {
         switch item.role {
