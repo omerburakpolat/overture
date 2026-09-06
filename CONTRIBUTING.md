@@ -6,10 +6,15 @@ Requirements: macOS 26+, Xcode 26+, and the `claude` CLI (signed in) for
 live testing.
 
 ```bash
-swift build          # all six library targets
-swift test           # 85+ unit tests, no network, no claude needed
-open Overture.xcodeproj   # the app target
+swift build              # all six library targets
+swift test               # 85+ unit tests, no network, no claude needed
+scripts/run-local.sh     # build the app and run it
+open Overture.xcodeproj  # or work in Xcode; ⌘R does the same thing
 ```
+
+`run-local.sh` quits any copy that is already running before launching. Several
+`Overture.app` copies can coexist and they share a bundle id, so `open` may
+otherwise focus a stale build instead of yours.
 
 ## Layout
 

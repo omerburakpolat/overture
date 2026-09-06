@@ -116,6 +116,29 @@ substitute for not writing the secret down.
   buggy.
 - **No telemetry, no analytics, no backend.** Also a public SECURITY.md claim.
 
+### Running your build
+
+```bash
+scripts/run-local.sh            # Debug, fastest
+scripts/run-local.sh Release    # what users actually get
+```
+
+Builds the working tree, quits whatever copy is running, and launches the one
+it just built.
+
+That last part is the point. Several `Overture.app` copies can exist at once —
+a brew-installed release in `/Applications`, an Xcode Debug build under the
+machine-global `SYMROOT`, a Release build under `build/`, an old rc — and they
+all share the bundle id `dev.overture.Overture`. `open`, the Dock and ⌘-Tab
+hand focus to whichever LaunchServices saw last, so double-clicking your new
+build can silently focus a stale one and you end up testing the wrong binary.
+
+**Do not build a DMG to try a change.** A DMG is a distribution wrapper: it
+needs a full signed Release build, `hdiutil`, and for anything you hand to
+someone else, notarization. `scripts/release.sh` exists for that and is not
+part of the edit-run loop. Xcode's ⌘R is fine too — it handles the quit and
+relaunch itself.
+
 ### Tests
 
 `swift test` runs 85 unit tests with no network and no `claude` needed. Live
