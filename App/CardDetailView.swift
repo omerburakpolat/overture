@@ -77,7 +77,7 @@ struct CardDetailView: View {
                     .padding(.vertical, DS.Space.s050)
                     .background(card.column.status.tint, in: Capsule())
                 if card.subState != .idle {
-                    Text(card.subState.rawValue)
+                    Text(card.subState.displayName)
                         .font(DS.TypeStyle.badgeLabel)
                         .foregroundStyle(DS.Color.Text.tertiary)
                 }

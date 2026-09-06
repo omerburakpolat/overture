@@ -44,6 +44,25 @@ public enum CardSubState: String, Codable, Sendable, CaseIterable, Equatable {
     /// Sub-states that pin a card to its column (spec 04 §2.3: "any drag of a
     /// card whose agent is `running`" is rejected; agent test runs count).
     public var pinsCard: Bool { self == .running || self == .testingRunning }
+
+    /// Badge wording; the raw value stays the storage key.
+    public var displayName: String {
+        switch self {
+        case .idle: "Idle"
+        case .drafting: "Drafting"
+        case .planning: "Planning"
+        case .awaitingApproval: "Awaiting approval"
+        case .running: "Running"
+        case .queued: "Queued"
+        case .needsInput: "Needs input"
+        case .interrupted: "Interrupted"
+        case .testingRunning: "Testing"
+        case .manual: "Manual testing"
+        case .testsFailed: "Tests failed"
+        case .mergeConflict: "Merge conflict"
+        case .error: "Error"
+        }
+    }
 }
 
 /// Why a run exists (resolution #4). The schema stores card *subState*; the

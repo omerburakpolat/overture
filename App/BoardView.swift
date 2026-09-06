@@ -262,7 +262,7 @@ struct CardView: View {
         .elevation(.card)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(card.title), \(card.column.title), \(card.subState.rawValue)")
+            "\(card.title), \(card.column.title), \(card.subState.displayName)")
     }
 
     private var needsInput: Bool {
