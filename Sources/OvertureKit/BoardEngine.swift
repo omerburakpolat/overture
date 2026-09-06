@@ -19,6 +19,7 @@ public enum CardTransition: Sendable, Equatable {
     case approveToDone           // Review/Testing approval act (resolution #16)
     case requestChanges          // Review → In Progress with feedback
     case reopen                  // Done → In Progress (fly-back)
+    case resumeRun               // idle In Progress card: run the agent again
     case archive
     // Automatic (system-triggered, spec 04 §2.2).
     case planReady               // ExitPlanMode arrived
@@ -111,6 +112,12 @@ public enum BoardEngine {
             move(card, to: .inProgress, subState: .running)
             effects = [.flyBack, .startExecution,
                        .announceMove(from: from, to: .inProgress)]
+        case .resumeRun:
+            guard from == .inProgress, !card.subState.pinsCard else {
+                throw TransitionError("Already running.")
+            }
+            card.subState = .running
+            effects = [.startExecution]
         case .archive:
             card.archivedAt = .now
             effects = []
@@ -185,11 +192,12 @@ public enum BoardEngine {
 
         if card.column != from {
             card.movedAt = .now
-            context.insert(ActivityEvent(
-                card: card, kind: .columnChanged,
-                summary: "\(card.title): \(from.rawValue) → \(card.column.rawValue)",
+            ActivityLog.record(
+                .columnChanged,
+                "Moved \(from.displayName) → \(card.column.displayName)",
                 payload: BlobCoding.encode(
-                    ["from": from.rawValue, "to": card.column.rawValue])))
+                    ["from": from.rawValue, "to": card.column.rawValue]),
+                on: card, in: context)
         }
         return effects
     }

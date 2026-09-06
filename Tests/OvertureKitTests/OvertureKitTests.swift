@@ -1,3 +1,4 @@
+import Synchronization
 import Foundation
 import SwiftData
 import Testing
@@ -267,6 +268,26 @@ private func makeCard(_ context: ModelContext, _ project: Project,
         #expect(effects.contains(.startExecution))
     }
 
+    @Test func resumeRunOnlyFromIdleInProgress() throws {
+        let store = try TestStore()
+        let (context, project) = (store.context, store.project)
+        let idle = makeCard(context, project, column: .inProgress)
+        let effects = try BoardEngine.apply(.resumeRun, to: idle, in: context)
+        #expect(effects == [.startExecution])
+        #expect(idle.subState == .running)
+        #expect(idle.column == .inProgress)
+
+        let running = makeCard(context, project, column: .inProgress,
+                               subState: .running)
+        #expect(throws: TransitionError.self) {
+            try BoardEngine.apply(.resumeRun, to: running, in: context)
+        }
+        let reviewed = makeCard(context, project, column: .review)
+        #expect(throws: TransitionError.self) {
+            try BoardEngine.apply(.resumeRun, to: reviewed, in: context)
+        }
+    }
+
     @Test func columnChangeWritesActivityEvent() throws {
         let store = try TestStore()
         let (context, project) = (store.context, store.project)
@@ -371,5 +392,33 @@ private func makeCard(_ context: ModelContext, _ project: Project,
                 key: UUID(), commandTemplate: "  ", basePort: 3000,
                 directory: FileManager.default.temporaryDirectory)
         }
+    }
+}
+
+// MARK: - Board store observation
+
+@Suite @MainActor struct BoardStoreObservationTests {
+    /// The board renders `store.cards(in:)`, which reads `project.cards`. A
+    /// freshly created ticket must notify observers of that array, or the
+    /// column never re-renders and "New Ticket" appears to do nothing.
+    @Test func creatingACardNotifiesColumnObservers() throws {
+        let services = try AppServices(inMemory: true)
+        let context = services.container.mainContext
+        let project = Project(name: "Obs", path: "/tmp/obs-repo")
+        context.insert(project)
+        try context.save()
+        let store = BoardStore(project: project, services: services,
+                               coordinator: SessionCoordinator(services: services))
+
+        let fired = Mutex(false)
+        withObservationTracking {
+            _ = store.cards(in: .backlog)
+        } onChange: {
+            fired.withLock { $0 = true }
+        }
+        store.createCard(title: "New", details: "", tags: [])
+
+        #expect(fired.withLock { $0 })
+        #expect(store.cards(in: .backlog).map(\.title) == ["New"])
     }
 }

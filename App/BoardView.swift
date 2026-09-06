@@ -27,16 +27,7 @@ extension Column {
         }
     }
 
-    var title: String {
-        switch self {
-        case .backlog: "Backlog"
-        case .plan: "Plan"
-        case .inProgress: "In Progress"
-        case .testing: "Testing"
-        case .review: "Review"
-        case .done: "Done"
-        }
-    }
+    var title: String { displayName }
 }
 
 struct BoardView: View {

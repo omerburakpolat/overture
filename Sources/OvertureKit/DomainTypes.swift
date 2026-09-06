@@ -9,6 +9,18 @@ import ClaudeKit
 /// lifecycle *drives* transitions but never fights the user.
 public enum Column: String, Codable, Sendable, CaseIterable, Equatable {
     case backlog, plan, inProgress, testing, review, done
+
+    /// The user-facing column name (activity rows, headers, VoiceOver).
+    public var displayName: String {
+        switch self {
+        case .backlog: "Backlog"
+        case .plan: "Plan"
+        case .inProgress: "In Progress"
+        case .testing: "Testing"
+        case .review: "Review"
+        case .done: "Done"
+        }
+    }
 }
 
 /// Runtime sub-state, orthogonal to the column (spec 04 §2.1, full set per
@@ -72,6 +84,10 @@ public enum EventKind: String, Codable, Sendable, CaseIterable, Equatable {
     case cardCreated, columnChanged, agentStarted, agentFinished
     case agentNeedsInput, toolUse, testRunFinished, prOpened, prMerged
     case deploymentReady, userNote
+    /// Title, description or tags edited on the ticket.
+    case ticketEdited
+    /// Work landed on the default branch (local squash-merge or commit).
+    case merged
 }
 
 /// Test-run mechanics (spec 02 §3.1).
