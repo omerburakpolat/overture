@@ -307,7 +307,7 @@ Guardrail note [verified: permissions docs]: `allowedTools` does **not** constra
 ### 7.4 Rate limits / usage caps
 
 - Signals: `system/api_retry` with `error: rate_limit|overloaded|billing_error` [verified schema]; error `result` subtypes; `StopFailure` hook matcher list confirms categories (`rate_limit`, `overloaded`, `authentication_failed`) [verified: hooks docs].
-- Response: pause the project's autonomous queue on `rate_limit`, exponential backoff using `retry_delay_ms`, banner on the board ("Claude usage limit — resuming at ~HH:MM" when derivable), never auto-retry `billing_error`/`authentication_failed` (surface to user). Per-card `--max-budget-usd` prevents runaway spend on API-key auth; `error_max_budget_usd` result ⇒ card → Review with "budget exhausted" note, resumable with a raised cap [verified subtype].
+- Response: pause the project's autonomous queue on `rate_limit`, exponential backoff using `retry_delay_ms`, banner on the board ("Claude usage limit — resuming at ~HH:MM" when derivable), never auto-retry `billing_error`/`authentication_failed` (surface to user). *Implemented in M1:* `authentication_failed` stops the run with a specific message, marks the card errored, re-probes auth, and raises a board banner with a Sign In action — see `SessionCoordinator.handleAuthenticationFailure`. Per-card `--max-budget-usd` prevents runaway spend on API-key auth; `error_max_budget_usd` result ⇒ card → Review with "budget exhausted" note, resumable with a raised cap [verified subtype].
 
 ### 7.5 Concurrency limits
 
@@ -316,6 +316,7 @@ Guardrail note [verified: permissions docs]: `allowedTools` does **not** constra
 ### 7.6 Auth & policy
 
 - Subscription (OAuth/keychain) auth is what this user has; it flows through normally in non-bare mode — but `--bare` breaks it (API-key only) [verified], hence §1.d's fallback. Anthropic's docs state third-party products may not offer claude.ai login/rate limits without approval [verified note on SDK overview]; Overture's posture — an open-source local harness driving the **user's own installed CLI and existing login**, never proxying auth — is the same category as other OSS harnesses, but the README should state this and the project should avoid bundling/redistributing the CLI.
+- *M1 measurements* (CLI v2.1.236, full detail in `06-m0-findings.md`): `claude auth status --json` reports `loggedIn`, `authMethod`, `apiProvider`, `forcedLoginMethod?`, `apiKeySource?`, `email?`, `orgId?`, `orgName?`, `subscriptionType?`, and emits the identity fields **only** for `authMethod == "claude.ai"`. It prints valid JSON and *then* exits 1 when logged out. `ANTHROPIC_API_KEY` surfaces as `apiKeySource`; `ANTHROPIC_AUTH_TOKEN` is **not reported at all** and was not honoured on a first-party setup, so Overture reports it without claiming an override. `forcedLoginMethod` arrives in the JSON, so Overture never parses managed-settings files itself.
 - `-p` mode skips the workspace-trust dialog and **will run a project's `.claude/settings.json` hooks and `.mcp.json` servers in untrusted folders** [verified: headless docs warning]. Overture adds its own first-open "Trust this project?" gate before ever spawning in a new directory.
 
 ### 7.7 Stream/pipe hygiene

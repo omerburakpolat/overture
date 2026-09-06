@@ -115,6 +115,18 @@ substitute for not writing the secret down.
   states this publicly, so a violation makes the project dishonest, not just
   buggy.
 - **No telemetry, no analytics, no backend.** Also a public SECURITY.md claim.
+- **Never handle Claude credentials.** Overture drives the user's CLI; it
+  never asks for or stores one. Specifically: no API-key or token text field,
+  no `SecItem*` against Claude's keychain services (VercelKit is the only
+  target that may `import Security`, for Vercel's own token), no read of
+  `~/.claude/.credentials.json` — not even for an expiry timestamp — no write
+  of `~/.claude/settings.json`, no `claude setup-token`, and no `--bare` on
+  product spawns. `RepositoryInvariantTests` fails the build on most of these,
+  the same way `ContrastTests` gates the palette.
+- **Auth fixtures are synthetic, never recorded.** Hand-write them with
+  `user@example.com` and a zero UUID. `FixtureHygieneTests` scans every fixture
+  for a real-looking email or home directory, because a find/replace misses
+  fragments split mid-token across `partial_json` chunks.
 - **One place builds the child environment**: `ClaudeChildEnvironment.make()`.
   It strips nested-session markers **by exact name, never by prefix** — a
   `CLAUDE` prefix sweep also removes `CLAUDE_CONFIG_DIR` (which selects the

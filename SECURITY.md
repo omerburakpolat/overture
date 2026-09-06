@@ -35,6 +35,14 @@ shape is deliberate, and it has consequences worth stating plainly.
 
 - It never reads, stores, transmits, or proxies your Claude credentials. It
   drives your existing local CLI login. See [NOTICE](NOTICE).
+- It never reads `~/.claude/.credentials.json` or your Claude Keychain items,
+  and it never asks you for an API key. It can *start* `claude auth login` for
+  you — the browser talks to the CLI's own callback, and nothing sensitive
+  passes through Overture.
+- It reads the CLI's **authentication status**, and the **names** (never the
+  values) of credential-bearing environment variables, so it can tell you which
+  credential your agents will actually use. When something in the environment
+  overrides your signed-in account, Overture says so — it does not change it.
 - It never writes to `~/.claude` — Claude Code owns that store.
 - It has no telemetry, no analytics, and no backend. The only network calls are
   Sparkle's signed update check and, if you opt in, the Vercel and GitHub APIs
@@ -51,6 +59,15 @@ shape is deliberate, and it has consequences worth stating plainly.
   as you would a pull request from a stranger.
 - **Dev servers run your project's code.** The preview pane executes the command
   configured for the project, bound to `localhost`.
+- **Signing out is machine-wide.** Settings → Claude → Sign Out runs
+  `claude auth logout`, which signs the CLI out for *every* app on the Mac,
+  including your terminal. Overture cannot sign those back in for you.
+- **An API key in Overture's environment outranks your subscription.** Overture
+  runs every agent headless, where Claude Code always prefers
+  `ANTHROPIC_API_KEY` if it is set — so a Pro/Max user with a stray key is
+  billed per token. Overture surfaces this in Settings rather than silently
+  choosing for you. Note that a GUI app inherits launchd's environment, not
+  your shell profile, so `claude` in Terminal and agents in Overture can differ.
 
 ## Update integrity
 

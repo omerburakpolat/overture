@@ -82,9 +82,29 @@ auth subcommand) → git/gh/vercel presence (per-feature degradation) → and a
 per-project **trust gate** shown before the first spawn in any new directory
 (`-p` skips workspace trust and runs untrusted `.claude` hooks / MCP servers).
 
+*Amended in M1, as shipped:* the first-run screen gates on `claude` **only**.
+git/gh/vercel presence is informational and belongs in Settings → Integrations
+— this resolution already said "per-feature degradation", and blocking launch
+on a missing `gh` contradicts that. The trust gate stays where it is, at first
+spawn in a directory, not at first run. The screen is a **window, not a
+modal**: Apple's HIG permits a launch-time gate when the app cannot function
+without the resource, but a `.constant` sheet binding is a trap — it left no
+way to reach Settings and change the CLI path. There is a "Continue Without
+Signing In" escape, and the screen re-probes on `didBecomeActive` so signing
+in from a terminal resolves it with no click. The model separates *which CLI*
+from *what credential*, so a signed-out user still has a resolved binary, and
+"the probe failed" is never reported as "you are signed out".
+
 **#13 — Budget model.** Tokens primary, dollars secondary and gated on auth
 type; `--max-budget-usd` behavior under OAuth is verified in M0 before any
-$-denominated UI ships. Subscription-side runaway brakes: turn caps + the
+$-denominated UI ships.
+
+*Amended in M1:* "auth type" is `CredentialPrecedence.Resolution`, **not**
+`subscriptionType`. Overture spawns every agent headless, and Anthropic
+documents that in non-interactive mode an API key is always used when present
+— so a Max subscriber with `ANTHROPIC_API_KEY` in the app's environment really
+is billed per token, and showing those dollars as a "~" estimate understates
+real money. Subscription-side runaway brakes: turn caps + the
 unanswered-permission auto-deny timer.
 
 **#14 — Card detail surface.** The five-tab sheet (Chat / Diff / Preview /
