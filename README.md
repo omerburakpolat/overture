@@ -15,6 +15,10 @@ a Done card flies back to In Progress.
 > **Status: pre-release, under active development.** Nothing here is stable yet.
 > Expect breaking changes between versions.
 
+<img width="1072" height="784" alt="Screenshot 2026-09-06 at 10 58 25" src="https://github.com/user-attachments/assets/a144abd8-6a9d-44db-9683-f676a2d937ff" />
+<img width="1072" height="796" alt="Screenshot 2026-09-06 at 10 51 32" src="https://github.com/user-attachments/assets/77267b44-ac78-4838-bd86-fcb3ebf9c7ef" />
+
+
 ## Download
 
 ```bash
