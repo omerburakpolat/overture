@@ -44,6 +44,33 @@ for updates.
    `NOTARY_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` — see
    [Setting the CI secrets](#setting-the-ci-secrets) below.
 
+## After the release: update the Homebrew tap
+
+The cask is **not** updated by the release workflow — it lives in a separate
+repository, [omerburakpolat/homebrew-tap](https://github.com/omerburakpolat/homebrew-tap),
+and CI has no write access there. A release is not finished until you do this,
+or `brew install --cask omerburakpolat/tap/overture` keeps serving the previous
+version.
+
+```bash
+VERSION=0.1.1
+curl -fsSL -o /tmp/Overture-$VERSION.dmg \
+  "https://github.com/omerburakpolat/overture/releases/download/v$VERSION/Overture-$VERSION.dmg"
+shasum -a 256 /tmp/Overture-$VERSION.dmg
+```
+
+Update `version` and `sha256` in `Casks/overture.rb` in the tap, then verify
+before pushing:
+
+```bash
+brew style omerburakpolat/tap
+brew audit --cask omerburakpolat/tap/overture
+brew upgrade --cask overture       # real end-to-end check
+```
+
+Keep `packaging/overture.rb` in this repo in sync — it is the source of truth
+the tap copy is generated from.
+
 ## Setting the CI secrets
 
 Notarization authenticates with an **App Store Connect API key**, not an Apple
