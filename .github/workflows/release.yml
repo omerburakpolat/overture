@@ -4,9 +4,9 @@ name: Release
 # Required repository secrets (docs/RELEASING.md):
 #   MACOS_CERT_P12         base64 Developer ID Application cert + key
 #   MACOS_CERT_PASSWORD    p12 password
-#   NOTARY_APPLE_ID        Apple ID email
-#   NOTARY_PASSWORD        app-specific password
-#   NOTARY_TEAM_ID         e.g. B2DYXY7U9Y
+#   NOTARY_KEY_P8_BASE64   base64 of the App Store Connect AuthKey_<ID>.p8
+#   NOTARY_KEY_ID          the <ID> from that filename, e.g. GCS84Q43UQ
+#   NOTARY_ISSUER_ID       issuer UUID from App Store Connect → Integrations
 #   SPARKLE_ED_PRIVATE_KEY EdDSA private key from Sparkle's generate_keys
 on:
   push:
@@ -57,12 +57,12 @@ jobs:
       # and says which of the three inputs to look at.
       - name: Verify notary credentials
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           fail=0
-          for name in NOTARY_APPLE_ID NOTARY_PASSWORD NOTARY_TEAM_ID; do
+          for name in NOTARY_KEY_P8_BASE64 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
             # Indirect expansion, not $(...) — command substitution strips the
             # trailing newline this check exists to catch. And a `case` glob,
             # not grep, because grep is line-oriented and never sees a
@@ -71,24 +71,39 @@ jobs:
             if [ -z "$value" ]; then
               echo "::error::$name is empty or unset"
               fail=1
-              continue
             fi
-            case "$value" in
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          # The key id and issuer are single tokens; whitespace means a stray
+          # newline got baked in by `echo | gh secret set`. The base64 blob is
+          # exempt — it legitimately wraps across lines.
+          for name in NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+            case "${!name}" in
               *[[:space:]]*)
                 echo "::error::$name contains whitespace. A trailing newline from 'echo | gh secret set' is the usual cause - use printf instead."
-                fail=1
+                exit 1
                 ;;
             esac
           done
-          [ "$fail" -eq 0 ] || exit 1
-          if ! xcrun notarytool history --apple-id "$NOTARY_APPLE_ID" \
-                 --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD" \
+
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${NOTARY_KEY_ID}.p8"
+          printf '%s' "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          if ! head -1 "$KEY_PATH" | grep -q 'BEGIN PRIVATE KEY'; then
+            echo "::error::NOTARY_KEY_P8_BASE64 did not decode to a PEM private key. Re-create it with: base64 -i AuthKey_<KEYID>.p8 | pbcopy"
+            exit 1
+          fi
+          echo "NOTARY_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+          if ! xcrun notarytool history --key "$KEY_PATH" \
+                 --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
                  >/dev/null 2>notary-err.txt; then
             echo "::error::Apple rejected the notary credentials."
             sed 's/^/  /' notary-err.txt
-            echo "NOTARY_PASSWORD must be an app-specific password from appleid.apple.com,"
-            echo "not your Apple ID password. NOTARY_APPLE_ID must be the Apple ID that"
-            echo "generated it, and NOTARY_TEAM_ID must be B2DYXY7U9Y."
+            echo "Check the key has not been revoked in App Store Connect, that"
+            echo "NOTARY_KEY_ID matches the AuthKey_<KEYID>.p8 filename, and that"
+            echo "NOTARY_ISSUER_ID is the issuer UUID from Users and Access →"
+            echo "Integrations → App Store Connect API."
             exit 1
           fi
           echo "Notary credentials accepted."
@@ -100,14 +115,13 @@ jobs:
 
       - name: Notarize
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
+          # NOTARY_KEY_PATH was exported by the preflight step. Its presence is
+          # what makes notarize.sh use the API key instead of a keychain
+          # profile, so no store-credentials call is needed here at all.
           VERSION="${GITHUB_REF_NAME#v}"
-          xcrun notarytool store-credentials overture-notary \
-            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
-            --password "$NOTARY_PASSWORD" --keychain "$KEYCHAIN"
           scripts/notarize.sh "build/Overture-$VERSION.dmg"
 
       - name: Generate appcast

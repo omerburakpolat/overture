@@ -40,38 +40,68 @@ for updates.
 
 4. **CI secrets** for `.github/workflows/release.yml`:
    `MACOS_CERT_P12` (base64 of the exported Developer ID .p12),
-   `MACOS_CERT_PASSWORD`, `NOTARY_APPLE_ID`, `NOTARY_PASSWORD`,
-   `NOTARY_TEAM_ID`, `SPARKLE_ED_PRIVATE_KEY`.
+   `MACOS_CERT_PASSWORD`, `NOTARY_KEY_P8_BASE64`, `NOTARY_KEY_ID`,
+   `NOTARY_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` — see
+   [Setting the CI secrets](#setting-the-ci-secrets) below.
 
 ## Setting the CI secrets
 
-`gh secret set` stores stdin verbatim, and `echo` appends a newline — a
-newline inside `NOTARY_PASSWORD` produces `HTTP 401 Invalid credentials` from
-Apple with no hint as to why. Use `printf`, and test the credentials before
-storing them:
+Notarization authenticates with an **App Store Connect API key**, not an Apple
+ID and app-specific password. The key is not invalidated when the Apple ID
+password changes, needs no 2FA, and can be revoked on its own — an
+app-specific password fails all three, and silently: changing your Apple ID
+password revokes every one of them, and Apple then answers `HTTP 401 Invalid
+credentials` with no indication why.
+
+**1. Create the key.** App Store Connect → Users and Access → Integrations →
+App Store Connect API → **Team Keys** → generate one with the *Developer*
+role. Download the `.p8` — it can only be downloaded **once** — and note the
+Key ID (also in the filename, `AuthKey_<KEYID>.p8`) and the Issuer ID (the
+UUID at the top of that page).
+
+Keep the key out of the repo and readable only by you:
 
 ```bash
-# 1. Prove the values work, before they go anywhere near GitHub.
-read -rs "?App-specific password: " PW && echo
-xcrun notarytool history --apple-id "<your-apple-id>" \
-  --team-id B2DYXY7U9Y --password "$PW"
-
-# 2. Only if that printed submission history, store it — no newline.
-printf '%s' "$PW" | gh secret set NOTARY_PASSWORD --repo omerburakpolat/overture
-printf '%s' "<your-apple-id>" | gh secret set NOTARY_APPLE_ID --repo omerburakpolat/overture
-printf '%s' "B2DYXY7U9Y"      | gh secret set NOTARY_TEAM_ID  --repo omerburakpolat/overture
-unset PW
+mkdir -p ~/.appstoreconnect/private_keys && chmod 700 ~/.appstoreconnect/private_keys
+mv ~/Downloads/AuthKey_<KEYID>.p8 ~/.appstoreconnect/private_keys/
+chmod 600 ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8
 ```
 
-`NOTARY_PASSWORD` must be an **app-specific password** from
-appleid.apple.com → Sign-In & Security → App-Specific Passwords — not your
-Apple ID password, and not a password from a different Apple ID than the one
-in `NOTARY_APPLE_ID`. Changing your Apple ID password revokes every
-app-specific password, so a release that used to work can start failing with
-401 for that reason alone.
+**2. Prove it works before storing it anywhere.**
 
-The release workflow validates all three secrets before it builds, so a bad
-one now fails in seconds rather than after a signed build.
+```bash
+xcrun notarytool history \
+  --key ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 \
+  --key-id <KEYID> --issuer <ISSUER_ID>
+```
+
+Submission history means all three values are right. Fix any error here, not
+in GitHub.
+
+**3. Store it locally** so `scripts/notarize.sh` works without env vars:
+
+```bash
+xcrun notarytool store-credentials overture-notary \
+  --key ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 \
+  --key-id <KEYID> --issuer <ISSUER_ID>
+```
+
+**4. Store it in GitHub.** `gh secret set` stores stdin verbatim and `echo`
+appends a newline, which corrupts single-token secrets — use `printf`:
+
+```bash
+base64 -i ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 \
+  | gh secret set NOTARY_KEY_P8_BASE64 --repo omerburakpolat/overture
+printf '%s' "<KEYID>"     | gh secret set NOTARY_KEY_ID    --repo omerburakpolat/overture
+printf '%s' "<ISSUER_ID>" | gh secret set NOTARY_ISSUER_ID --repo omerburakpolat/overture
+```
+
+The base64 blob is the one secret allowed to contain newlines — it wraps by
+design, and the workflow decodes it and checks the result is a PEM private
+key before using it.
+
+The release workflow validates all three secrets against Apple before it
+builds, so a bad one fails in seconds rather than after a signed build.
 
 ## Cutting a release
 
