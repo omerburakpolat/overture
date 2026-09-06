@@ -28,14 +28,46 @@ xcodebuild -project "$ROOT/Overture.xcodeproj" -scheme Overture \
 
 [ -d "$APP" ] || { echo "Expected app at $APP" >&2; exit 1; }
 
-# Quit any running copy — including one from a different path. Without this,
-# `open` just focuses the old process and nothing appears to change.
-if pgrep -x Overture > /dev/null; then
-  RUNNING="$(ps -p "$(pgrep -x Overture | head -1)" -o comm= | sed 's|/Contents/MacOS/Overture||')"
-  echo "Quitting running copy: $RUNNING"
+# Quit EVERY running copy, not just one — including copies from other paths.
+# Without this, `open` just focuses an old process and nothing appears to
+# change. All copies share the bundle id, so a single survivor is enough to
+# steal the launch: quitting only the lowest pid left this script failing in
+# exactly the multi-copy case it exists for.
+PIDS="$(pgrep -x Overture 2>/dev/null || true)"
+if [ -n "$PIDS" ]; then
+  for pid in $PIDS; do
+    RUNNING="$(ps -p "$pid" -o comm= 2>/dev/null | sed 's|/Contents/MacOS/Overture||' || true)"
+    [ -n "$RUNNING" ] && echo "Quitting running copy: $RUNNING (pid $pid)"
+  done
+
+  # Ask nicely first so the app can save state.
   osascript -e 'quit app "Overture"' 2>/dev/null || true
-  for _ in $(seq 1 20); do pgrep -x Overture > /dev/null || break; sleep 0.25; done
-  pgrep -x Overture > /dev/null && { echo "Overture would not quit — quit it manually" >&2; exit 1; }
+  for _ in $(seq 1 20); do
+    still=""
+    for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && still="$still $pid"; done
+    [ -z "$still" ] && break
+    sleep 0.25
+  done
+
+  # `quit app` addresses one process by name; anything else still up gets a
+  # TERM, which is still a graceful AppKit shutdown.
+  if [ -n "$still" ]; then
+    for pid in $still; do kill -TERM "$pid" 2>/dev/null || true; done
+    for _ in $(seq 1 20); do
+      still=""
+      for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && still="$still $pid"; done
+      [ -z "$still" ] && break
+      sleep 0.25
+    done
+  fi
+
+  if [ -n "$still" ]; then
+    echo "These copies would not quit — quit them manually:" >&2
+    for pid in $still; do
+      echo "  pid $pid  $(ps -p "$pid" -o comm= 2>/dev/null || echo '<gone>')" >&2
+    done
+    exit 1
+  fi
 fi
 
 echo "Launching $APP"
