@@ -64,6 +64,6 @@ Release DMGs are built by the
 with Developer ID, and notarized. Verify any download yourself:
 
 ```bash
-xcrun stapler validate Overture-0.1.0.dmg          # notarization ticket present
+xcrun stapler validate Overture-*.dmg             # notarization ticket present
 spctl -a -vvv -t exec /Applications/Overture.app   # what Gatekeeper runs
 ```

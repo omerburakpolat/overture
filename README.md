@@ -1,7 +1,7 @@
 # Overture
 
 **A native macOS Kanban harness for Claude Code.** Project tiles show live agent
-progress, git status, and Vercel deployments; each project opens into a board
+progress, git status, and last-chat previews; each project opens into a board
 where cards *are* Claude Code sessions and move themselves — plans stream into
 the **Plan** column, running agents live in **In Progress**, finished work lands
 in **Review**, and you mark it **Done**. Continue any conversation at any time;
@@ -26,7 +26,7 @@ Every release is signed with a Developer ID certificate and notarized by Apple,
 so Gatekeeper opens it without a warning. Verify for yourself if you like:
 
 ```bash
-xcrun stapler validate ~/Downloads/Overture-0.1.0.dmg
+xcrun stapler validate ~/Downloads/Overture-*.dmg
 ```
 
 That confirms Apple's notarization ticket is attached to the image. Once you
