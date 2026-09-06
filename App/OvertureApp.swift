@@ -136,31 +136,35 @@ final class AppState {
 struct RootView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.overtureTheme) private var theme
-    @State private var onboardingDone = false
+    @State private var setupChecked = false
+    @State private var dismissedSetup = false
 
     var body: some View {
         @Bindable var appState = appState
-        NavigationStack(path: $appState.navigationPath) {
-            HomeView()
-                .navigationDestination(for: Project.ID.self) { projectID in
-                    if let project = appState.projectsStore.projects
-                        .first(where: { $0.id == projectID }) {
-                        BoardView(store: BoardStore(
-                            project: project,
-                            services: appState.services,
-                            coordinator: appState.coordinator))
-                    }
-                }
+        Group {
+            if !setupChecked {
+                // No flash of an empty board before the first probe lands.
+                CheckingView()
+            } else if appState.services.claude?.canSpawn != true, !dismissedSetup {
+                // A full window, not a modal: ⌘, still reaches Settings and
+                // the menu bar stays live, so this is a gate and never a trap.
+                WelcomeView(dismissed: $dismissedSetup)
+            } else {
+                board
+            }
         }
         .task {
             AppDelegate.shared?.state = appState
             await appState.services.refreshClaude(reason: .launch)
             _ = await appState.services.reconcileOrphans()
             appState.services.autoArchiveDoneCards()
-            onboardingDone = true
+            setupChecked = true
         }
-        .sheet(isPresented: .constant(needsOnboardingSheet)) {
-            OnboardingView()
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Recovery without a click: install the CLI or sign in from a
+            // terminal, ⌘-tab back, and the screen resolves itself.
+            Task { await appState.services.refreshClaude(reason: .becameActive) }
         }
         .overlay {
             if appState.showCommandPalette {
@@ -180,409 +184,69 @@ struct RootView: View {
         .animation(DS.Motion.fade, value: appState.showCommandPalette)
     }
 
-    private var needsOnboardingSheet: Bool {
-        guard onboardingDone else { return false }
-        return appState.services.claude?.canSpawn != true
-    }
-}
-
-/// First-run checklist (resolution #12): each failure is specific and
-/// actionable; the sheet re-probes on demand.
-struct OnboardingView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s400) {
-            Text("Welcome to Overture")
-                .font(DS.TypeStyle.screenTitle)
-            Text("Overture drives your own Claude Code CLI. One check first:")
-                .font(DS.TypeStyle.emptyStateBody)
-                .foregroundStyle(DS.Color.Text.secondary)
-
-            checklist
-
-            HStack {
-                Spacer()
-                Button("Retry") {
-                    Task { await appState.services.refreshClaude(reason: .manual) }
-                }
-                .keyboardShortcut(.defaultAction)
+    @ViewBuilder private var board: some View {
+        @Bindable var appState = appState
+        VStack(spacing: 0) {
+            // Re-entry after "Continue Without Signing In", and the landing
+            // place when a running agent's credential dies (spec 01 §7.4).
+            if appState.services.claude?.canSpawn != true
+                || appState.services.authInterrupted {
+                setupBanner
             }
-        }
-        .padding(DS.Space.s600)
-        .frame(width: DS.Layout.Sheet.narrow)
-        .background(DS.Color.Surface.overlay)
-    }
-
-    /// Resolution #12, on the two-axis model: the CLI row and the sign-in row
-    /// are independent, so a signed-out user still sees where their CLI is.
-    @ViewBuilder private var checklist: some View {
-        if let readiness = appState.services.claude {
-            switch readiness.cli.installation {
-            case .missing(let searched):
-                checklistRow(icon: DS.Icon.error, tint: DS.Status.danger,
-                             title: "Claude Code not found",
-                             detail: "Install it with `brew install --cask "
-                                + "claude-code`, then check again. Searched: "
-                                + searched.joined(separator: ", "))
-            case .found(let url):
-                cliVersionRow(readiness.cli, path: url.path)
-            }
-
-            if readiness.cli.isUsable {
-                authRow(readiness.auth)
-            }
-            credentialRow(readiness)
-        } else {
-            checklistRow(icon: DS.Icon.idle, tint: DS.Status.neutral,
-                         title: "Checking your Claude Code setup…",
-                         detail: "Looking for the CLI and asking who it is "
-                            + "signed in as.")
+            navigation
         }
     }
 
-    @ViewBuilder
-    private func cliVersionRow(_ cli: CLIStatus, path: String) -> some View {
-        switch cli.version {
-        case .belowMinimum(let found):
-            checklistRow(
-                icon: DS.Icon.error, tint: DS.Status.danger,
-                title: "Claude Code \(found) is too old",
-                detail: "Overture is tested against "
-                    + "\(ClaudeEnvironmentCheck.minimumTestedVersion) and newer. "
-                    + "Update with `brew upgrade --cask claude-code`.")
-        case .unreadable:
-            checklistRow(
-                icon: DS.Icon.error, tint: DS.Status.caution,
-                title: "Could not read the CLI version",
-                detail: "Run `claude --version` in a terminal to check the "
-                    + "installation at \(path).")
-        case .untested(let found):
-            // Newer than tested warns, never blocks (spec 01 §7.1).
-            checklistRow(
-                icon: DS.Icon.info, tint: DS.Status.caution,
-                title: "Claude Code \(found)",
-                detail: "Newer than the version Overture is tested against "
-                    + "(\(ClaudeEnvironmentCheck.minimumTestedVersion)). This "
-                    + "should be fine — please report anything that looks off.")
-        case .supported(let found):
-            checklistRow(icon: DS.Icon.finished, tint: DS.Status.success,
-                         title: "Claude Code \(found)", detail: path)
-        case nil:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private func authRow(_ auth: AuthState) -> some View {
-        switch auth {
-        case .signedIn(let account):
-            checklistRow(
-                icon: DS.Icon.finished, tint: DS.Status.success,
-                title: account.email ?? account.authMethod.displayName,
-                detail: account.isIdentityless
-                    ? "Claude Code didn't report an account for this credential."
-                    : [account.orgName, account.subscriptionType]
-                        .compactMap { $0 }.joined(separator: " · "))
-        case .signedOut(let account):
-            checklistRow(
-                icon: DS.Icon.awaitingPermission, tint: DS.Status.caution,
-                title: "Claude Code isn't signed in",
-                detail: "Sign in below. Your browser opens Anthropic's login "
-                    + "page and the CLI stores the credentials — Overture "
-                    + "never sees them.")
-            SignInView(permittedModes: account.permittedLoginModes)
-        case .blockedByPolicy(let method):
-            checklistRow(
-                icon: DS.Icon.error, tint: DS.Status.caution,
-                title: "Your organization manages this sign-in",
-                detail: ClaudeAccount(loggedIn: false,
-                                      forcedLoginMethod: method)
-                    .policyExplanation ?? "Sign in from a terminal.")
-        case .probeFailed(let failure):
-            checklistRow(
-                icon: DS.Icon.error, tint: DS.Status.danger,
-                title: "Couldn't ask the CLI who's signed in",
-                detail: failure.summary
-                    + (failure.stderrTail.isEmpty ? ""
-                       : "\n" + failure.stderrTail.suffix(3).joined(separator: "\n")))
-        }
-    }
-
-    /// Shown only when it changes what the user should expect — an
-    /// environment credential outranking their login, or a shell that
-    /// defines credentials Overture cannot see.
-    @ViewBuilder
-    private func credentialRow(_ readiness: ClaudeReadiness) -> some View {
-        if let credential = readiness.effectiveCredential,
-           credential.overridesReportedLogin {
-            checklistRow(icon: DS.Icon.info, tint: DS.Status.caution,
-                         title: "Check which credential your agents will use",
-                         detail: credential.explanation)
-        }
-        if let divergence = readiness.shellDivergence, divergence.hasDivergence {
-            checklistRow(
-                icon: DS.Icon.info, tint: DS.Status.neutral,
-                title: "Your login shell defines credentials Overture can't see",
-                detail: divergence.names.map(\.rawValue)
-                    .joined(separator: ", ")
-                    + " — `claude` in Terminal and agents in Overture may use "
-                    + "different credentials.")
-        }
-    }
-
-    private func checklistRow(icon: String, tint: DS.StatusColor,
-                              title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: DS.Space.s300) {
-            Image(systemName: icon)
-                .foregroundStyle(tint.text)
-            VStack(alignment: .leading, spacing: DS.Space.s100) {
-                Text(title).font(DS.TypeStyle.cardTitle)
-                Text(detail)
-                    .font(DS.TypeStyle.cardMeta)
-                    .foregroundStyle(DS.Color.Text.secondary)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(DS.Space.s300)
-        .background(tint.tint, in: RoundedRectangle(
-            cornerRadius: DS.Radius.panel))
-    }
-}
-
-/// App-initiated `claude auth login`.
-///
-/// Overture drives the CLI and renders a native screen from what it says; it
-/// never mirrors the terminal. The credentials go browser → Anthropic → the
-/// CLI's own callback and never pass through this process. Even the pasted
-/// value is a one-time authorization code, forwarded to the child's stdin and
-/// retained nowhere.
-struct SignInView: View {
-    @Environment(AppState.self) private var appState
-    let permittedModes: [AuthLogin.Mode]
-
-    @State private var login: AuthLogin?
-    @State private var phase: Phase = .idle
-    @State private var authorizationURL: URL?
-    @State private var transcript: [String] = []
-    @State private var failure: String?
-    @State private var codeHint: String?
-    @State private var code = ""
-    @State private var showDetails = false
-    @FocusState private var codeFocused: Bool
-
-    private enum Phase: Equatable { case idle, starting, awaitingBrowser, finished }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s300) {
-            switch phase {
-            case .idle, .finished:
-                methodButtons
-            case .starting, .awaitingBrowser:
-                activeFlow
-            }
-            if let failure {
-                Label(failure, systemImage: DS.Icon.error)
-                    .font(DS.TypeStyle.cardMeta)
-                    .foregroundStyle(DS.Status.danger.text)
-                    .padding(DS.Space.s300)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.Status.danger.tint,
-                                in: RoundedRectangle(cornerRadius: DS.Radius.sm))
-            }
-            terminalFallback
-        }
-        .onDisappear {
-            // An authorization code must not outlive the screen.
-            code = ""
-            Task { await login?.cancel() }
-        }
-    }
-
-    @ViewBuilder private var methodButtons: some View {
-        // HIG: "Refer only to authentication methods that are available in
-        // the current context" — a policy-pinned org sees only its method.
-        ForEach(Array(permittedModes.enumerated()), id: \.offset) { index, mode in
-            Button { start(mode) } label: {
-                VStack(alignment: .leading, spacing: DS.Space.s050) {
-                    Text(mode.buttonTitle).font(DS.TypeStyle.cardTitle)
-                    Text(mode.subtitle)
-                        .font(DS.TypeStyle.cardMeta)
-                        .foregroundStyle(DS.Color.Text.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(DS.Space.s300)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .background(index == 0 ? DS.Color.Accent.tint : DS.Color.Surface.raised,
-                        in: RoundedRectangle(cornerRadius: DS.Radius.md))
-            .overlay(RoundedRectangle(cornerRadius: DS.Radius.md)
-                .stroke(DS.Color.Border.subtle, lineWidth: 1))
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(mode.buttonTitle). \(mode.subtitle)")
-        }
-    }
-
-    @ViewBuilder private var activeFlow: some View {
-        HStack(spacing: DS.Space.s200) {
-            ProgressView().controlSize(.small)
-            Text(phase == .starting
-                 ? "Starting sign-in…"
-                 : "Finish signing in in your browser, then come back.")
+    private var setupBanner: some View {
+        HStack(spacing: DS.Space.s300) {
+            Image(systemName: DS.Icon.awaitingPermission)
+                .foregroundStyle(DS.Status.caution.text)
+            Text(appState.services.authInterrupted
+                 ? "Claude Code could not authenticate. Agents are stopped "
+                    + "until you sign in again."
+                 : "Claude Code isn't ready. Agents can't run until it is.")
                 .font(DS.TypeStyle.cardMeta)
-                .foregroundStyle(DS.Color.Text.secondary)
+                .foregroundStyle(DS.Color.Text.primary)
+            Spacer()
+            Button("Set Up\u{2026}") { dismissedSetup = false }
         }
+        .padding(.horizontal, DS.Space.s400)
+        .padding(.vertical, DS.Space.s300)
+        .background(DS.Status.caution.tint)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
-
-        if let authorizationURL {
-            HStack {
-                // Only ever a host-allowlisted Anthropic URL.
-                Link("Open the Sign-In Page", destination: authorizationURL)
-                    .buttonStyle(.borderedProminent)
-                Button("Copy Link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(authorizationURL.absoluteString,
-                                                   forType: .string)
-                }
-            }
-        }
-
-        if codeHint != nil {
-            VStack(alignment: .leading, spacing: DS.Space.s100) {
-                // Forwarded verbatim: the CLI splits on "#" and rejects a
-                // value without both halves.
-                TextField("Paste the code from your browser (including the "
-                          + "part after #)", text: $code)
-                    .textFieldStyle(.roundedBorder)
-                    .font(DS.TypeStyle.code)
-                    .focused($codeFocused)
-                    .onSubmit(submitCode)
-                Text("Only needed if your browser shows a code instead of "
-                     + "returning here.")
-                    .font(DS.TypeStyle.timestamp)
-                    .foregroundStyle(DS.Color.Text.tertiary)
-            }
-        }
-
-        HStack {
-            if codeHint != nil {
-                Button("Submit Code") { submitCode() }.disabled(code.isEmpty)
-            }
-            Spacer()
-            Button("Cancel", role: .cancel) { cancel() }
-                .keyboardShortcut(.cancelAction)
-        }
-
-        if !transcript.isEmpty {
-            DisclosureGroup("Show CLI output", isExpanded: $showDetails) {
-                ScrollView {
-                    Text(transcript.suffix(20).joined(separator: "\n"))
-                        .font(DS.TypeStyle.code)
-                        .foregroundStyle(DS.Color.Text.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: DS.Layout.consoleHeight)
-            }
-            .font(DS.TypeStyle.cardMeta)
-        }
     }
 
-    /// Always available, never automated. Driving Terminal.app would mean
-    /// writing a shell script to disk or asking for Apple Events permission —
-    /// both worse security stories than a pipe, and neither works for
-    /// everyone's terminal of choice.
-    @ViewBuilder private var terminalFallback: some View {
-        DisclosureGroup("Having trouble?") {
-            VStack(alignment: .leading, spacing: DS.Space.s200) {
-                Text("You can sign in from any terminal instead:")
-                    .font(DS.TypeStyle.cardMeta)
-                    .foregroundStyle(DS.Color.Text.secondary)
-                HStack {
-                    Text("claude auth login")
-                        .font(DS.TypeStyle.code)
-                        .textSelection(.enabled)
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString("claude auth login",
-                                                       forType: .string)
-                    }
-                    Button("Check Again") {
-                        Task { await appState.services.refreshClaude(reason: .manual) }
+    private var navigation: some View {
+        @Bindable var appState = appState
+        return NavigationStack(path: $appState.navigationPath) {
+            HomeView()
+                .navigationDestination(for: Project.ID.self) { projectID in
+                    if let project = appState.projectsStore.projects
+                        .first(where: { $0.id == projectID }) {
+                        BoardView(store: BoardStore(
+                            project: project,
+                            services: appState.services,
+                            coordinator: appState.coordinator))
                     }
                 }
-            }
-            .padding(.top, DS.Space.s100)
-        }
-        .font(DS.TypeStyle.cardMeta)
-    }
-
-    private func start(_ mode: AuthLogin.Mode) {
-        guard let claudeURL = appState.services.claudeURL else { return }
-        let flow = AuthLogin()
-        login = flow
-        transcript = []
-        failure = nil
-        codeHint = nil
-        phase = .starting
-        Task {
-            guard let events = try? await flow.start(claudeURL: claudeURL,
-                                                     mode: mode) else {
-                failure = "Overture couldn't start `claude auth login`."
-                phase = .idle
-                return
-            }
-            for await event in events { await handle(event) }
         }
     }
+}
 
-    private func handle(_ event: AuthLogin.Event) async {
-        switch event {
-        case .opening:
-            phase = .awaitingBrowser
-        case .authorizationURL(let url):
-            authorizationURL = url
-            phase = .awaitingBrowser
-        case .awaitingCode:
-            codeHint = "awaiting"
-        case .message(let line):
-            transcript.append(line)
-        case .invalidCode(let text):
-            failure = "Paste the whole code, including the part after `#`."
-            transcript.append(text)
-            code = ""
-            codeFocused = true
-        case .failed(let text):
-            failure = text
-            transcript.append(text)
-            showDetails = true
-        case .succeeded:
-            transcript.append("Login successful.")
-        case .ended:
-            phase = .finished
-            code = ""
-            // Never trust the exit code — ask the CLI who it is now.
-            let readiness = await appState.services
-                .refreshClaude(reason: .afterSignIn)
-            if readiness?.auth.isSpawnable != true, failure == nil {
-                failure = "Sign-in didn't complete. You can try again, or "
-                    + "sign in from a terminal."
-            }
+/// Shown for the moment before the first probe answers, so the board never
+/// flashes empty behind a gate that is about to appear.
+struct CheckingView: View {
+    var body: some View {
+        VStack(spacing: DS.Space.s300) {
+            ProgressView().controlSize(.large)
+            Text("Checking your Claude Code setup\u{2026}")
+                .font(DS.TypeStyle.emptyStateBody)
+                .foregroundStyle(DS.Color.Text.secondary)
         }
-    }
-
-    private func submitCode() {
-        let pasted = code
-        code = ""
-        Task { try? await login?.submit(pasted) }
-    }
-
-    private func cancel() {
-        Task { await login?.cancel() }
-        code = ""
-        phase = .idle
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.Color.Surface.canvas)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -635,70 +299,5 @@ struct MenuBarView: View {
         }
         .padding(DS.Space.s400)
         .frame(minWidth: DS.Layout.menuMinWidth)
-    }
-}
-
-struct SettingsView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        Form {
-            Section("Claude Code") {
-                LabeledContent("CLI") {
-                    Text(appState.services.claudeURL?.path ?? "not found")
-                        .font(DS.TypeStyle.code)
-                        .textSelection(.enabled)
-                }
-                if let version = appState.services.claude?.cli.version?.semantic {
-                    LabeledContent("Version") { Text(version.description) }
-                }
-                if let account = appState.services.account {
-                    LabeledContent("Signed in as") {
-                        Text(account.email ?? account.authMethod.displayName)
-                    }
-                    if let organization = account.orgName {
-                        LabeledContent("Organization") { Text(organization) }
-                    }
-                    LabeledContent("Plan") {
-                        Text(account.subscriptionType
-                             ?? account.apiProvider.displayName)
-                    }
-                }
-            }
-
-            // The honest row: which credential the app's own agents will use.
-            // `claude auth status` alone can't answer this, because an
-            // environment credential outranks the login it reports.
-            if let credential = appState.services.claude?.effectiveCredential {
-                Section("Effective credential") {
-                    LabeledContent("Agents will use") {
-                        Text(credential.explanation)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    if credential.overridesReportedLogin {
-                        Label("This overrides the account signed in above.",
-                              systemImage: DS.Icon.error)
-                            .font(DS.TypeStyle.cardMeta)
-                            .foregroundStyle(DS.Status.caution.text)
-                    }
-                    if !credential.evidence.isEmpty {
-                        LabeledContent("From") {
-                            Text(credential.evidence.map(\.rawValue)
-                                    .joined(separator: ", "))
-                                .font(DS.TypeStyle.code)
-                        }
-                    }
-                }
-            }
-
-            Section {
-                Button("Check Again") {
-                    Task { await appState.services.refreshClaude(reason: .manual) }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: DS.Layout.Sheet.narrow, height: 380)
-        .task { await appState.services.refreshClaude(reason: .becameActive) }
     }
 }

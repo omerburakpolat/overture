@@ -4,6 +4,11 @@ import ClaudeKit
 import GitKit
 import VercelKit
 
+/// A CLI chosen by hand in Settings. `UserDefaults` is the right home: this
+/// is app configuration, not board data, and nothing credential-bearing is
+/// ever stored — only a path.
+let claudeOverrideDefaultsKey = "claudeExecutableOverridePath"
+
 /// Composition root the app target builds once and injects. Owns the store,
 /// the process manager, and what Overture knows about the Claude Code CLI.
 @MainActor
@@ -22,7 +27,7 @@ public final class AppServices {
     /// that finds a working credential.
     public private(set) var authInterrupted = false
 
-    private var environmentCheck = ClaudeEnvironmentCheck()
+    private var environmentCheck = ClaudeEnvironmentCheck(probes: AppServices.liveProbes())
     private var lastRefresh: Date?
     private var refreshInFlight = false
 
@@ -119,6 +124,34 @@ public final class AppServices {
     public func handleAuthenticationFailure() async {
         authInterrupted = true
         await refreshClaude(reason: .afterAuthFailure)
+    }
+
+    /// A CLI chosen by hand in Settings, tried before the well-known paths.
+    ///
+    /// `UserDefaults` is the right home: it is app configuration, not board
+    /// data. Nothing credential-bearing is ever stored here — only a path.
+    public var hasClaudeExecutableOverride: Bool {
+        UserDefaults.standard.string(forKey: claudeOverrideDefaultsKey) != nil
+    }
+
+    public func setClaudeExecutableOverride(_ url: URL?) {
+        if let url {
+            UserDefaults.standard.set(url.path,
+                                      forKey: claudeOverrideDefaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(
+                forKey: claudeOverrideDefaultsKey)
+        }
+        environmentCheck = ClaudeEnvironmentCheck(probes: Self.liveProbes())
+    }
+
+    /// The live probe set, with the Settings override wired in.
+    static func liveProbes() -> ClaudeEnvironmentCheck.Probes {
+        var probes = ClaudeEnvironmentCheck.Probes.live
+        probes.overridePath = {
+            UserDefaults.standard.string(forKey: claudeOverrideDefaultsKey)
+        }
+        return probes
     }
 
     /// Test seam: installs a readiness snapshot without running a probe.
