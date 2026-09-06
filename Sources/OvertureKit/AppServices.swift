@@ -38,7 +38,7 @@ public final class AppServices {
     /// the app.
     public var claudeURLOverride: URL?
 
-    public var account: ClaudeAccount? { claude?.auth.account }
+    public var account: ClaudeAccount? { claude?.auth.signedInAccount }
 
     /// Whether a session can start right now.
     public var canSpawn: Bool { claudeURLOverride != nil || claude?.canSpawn == true }

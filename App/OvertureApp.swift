@@ -284,14 +284,14 @@ struct OnboardingView: View {
                     ? "Claude Code didn't report an account for this credential."
                     : [account.orgName, account.subscriptionType]
                         .compactMap { $0 }.joined(separator: " · "))
-        case .signedOut:
+        case .signedOut(let account):
             checklistRow(
                 icon: DS.Icon.awaitingPermission, tint: DS.Status.caution,
                 title: "Claude Code isn't signed in",
                 detail: "Sign in below. Your browser opens Anthropic's login "
                     + "page and the CLI stores the credentials — Overture "
                     + "never sees them.")
-            SignInSection()
+            SignInView(permittedModes: account.permittedLoginModes)
         case .blockedByPolicy(let method):
             checklistRow(
                 icon: DS.Icon.error, tint: DS.Status.caution,
@@ -350,84 +350,240 @@ struct OnboardingView: View {
     }
 }
 
-/// App-initiated `claude auth login` (see AuthLogin): relays CLI output and
-/// forwards the confirmation code if the flow asks for one.
-struct SignInSection: View {
+/// App-initiated `claude auth login`.
+///
+/// Overture drives the CLI and renders a native screen from what it says; it
+/// never mirrors the terminal. The credentials go browser → Anthropic → the
+/// CLI's own callback and never pass through this process. Even the pasted
+/// value is a one-time authorization code, forwarded to the child's stdin and
+/// retained nowhere.
+struct SignInView: View {
     @Environment(AppState.self) private var appState
+    let permittedModes: [AuthLogin.Mode]
+
     @State private var login: AuthLogin?
-    @State private var output: [String] = []
+    @State private var phase: Phase = .idle
+    @State private var authorizationURL: URL?
+    @State private var transcript: [String] = []
+    @State private var failure: String?
+    @State private var codeHint: String?
     @State private var code = ""
-    @State private var running = false
+    @State private var showDetails = false
+    @FocusState private var codeFocused: Bool
+
+    private enum Phase: Equatable { case idle, starting, awaitingBrowser, finished }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s300) {
-            if running {
+            switch phase {
+            case .idle, .finished:
+                methodButtons
+            case .starting, .awaitingBrowser:
+                activeFlow
+            }
+            if let failure {
+                Label(failure, systemImage: DS.Icon.error)
+                    .font(DS.TypeStyle.cardMeta)
+                    .foregroundStyle(DS.Status.danger.text)
+                    .padding(DS.Space.s300)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DS.Status.danger.tint,
+                                in: RoundedRectangle(cornerRadius: DS.Radius.sm))
+            }
+            terminalFallback
+        }
+        .onDisappear {
+            // An authorization code must not outlive the screen.
+            code = ""
+            Task { await login?.cancel() }
+        }
+    }
+
+    @ViewBuilder private var methodButtons: some View {
+        // HIG: "Refer only to authentication methods that are available in
+        // the current context" — a policy-pinned org sees only its method.
+        ForEach(Array(permittedModes.enumerated()), id: \.offset) { index, mode in
+            Button { start(mode) } label: {
+                VStack(alignment: .leading, spacing: DS.Space.s050) {
+                    Text(mode.buttonTitle).font(DS.TypeStyle.cardTitle)
+                    Text(mode.subtitle)
+                        .font(DS.TypeStyle.cardMeta)
+                        .foregroundStyle(DS.Color.Text.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(DS.Space.s300)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(index == 0 ? DS.Color.Accent.tint : DS.Color.Surface.raised,
+                        in: RoundedRectangle(cornerRadius: DS.Radius.md))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.md)
+                .stroke(DS.Color.Border.subtle, lineWidth: 1))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(mode.buttonTitle). \(mode.subtitle)")
+        }
+    }
+
+    @ViewBuilder private var activeFlow: some View {
+        HStack(spacing: DS.Space.s200) {
+            ProgressView().controlSize(.small)
+            Text(phase == .starting
+                 ? "Starting sign-in…"
+                 : "Finish signing in in your browser, then come back.")
+                .font(DS.TypeStyle.cardMeta)
+                .foregroundStyle(DS.Color.Text.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+
+        if let authorizationURL {
+            HStack {
+                // Only ever a host-allowlisted Anthropic URL.
+                Link("Open the Sign-In Page", destination: authorizationURL)
+                    .buttonStyle(.borderedProminent)
+                Button("Copy Link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(authorizationURL.absoluteString,
+                                                   forType: .string)
+                }
+            }
+        }
+
+        if codeHint != nil {
+            VStack(alignment: .leading, spacing: DS.Space.s100) {
+                // Forwarded verbatim: the CLI splits on "#" and rejects a
+                // value without both halves.
+                TextField("Paste the code from your browser (including the "
+                          + "part after #)", text: $code)
+                    .textFieldStyle(.roundedBorder)
+                    .font(DS.TypeStyle.code)
+                    .focused($codeFocused)
+                    .onSubmit(submitCode)
+                Text("Only needed if your browser shows a code instead of "
+                     + "returning here.")
+                    .font(DS.TypeStyle.timestamp)
+                    .foregroundStyle(DS.Color.Text.tertiary)
+            }
+        }
+
+        HStack {
+            if codeHint != nil {
+                Button("Submit Code") { submitCode() }.disabled(code.isEmpty)
+            }
+            Spacer()
+            Button("Cancel", role: .cancel) { cancel() }
+                .keyboardShortcut(.cancelAction)
+        }
+
+        if !transcript.isEmpty {
+            DisclosureGroup("Show CLI output", isExpanded: $showDetails) {
                 ScrollView {
-                    Text(output.suffix(12).joined(separator: "\n"))
+                    Text(transcript.suffix(20).joined(separator: "\n"))
                         .font(DS.TypeStyle.code)
                         .foregroundStyle(DS.Color.Text.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(height: DS.Layout.consoleHeight)
-                .padding(DS.Space.s200)
-                .background(DS.Color.Surface.sunken,
-                            in: RoundedRectangle(cornerRadius: DS.Radius.sm))
+            }
+            .font(DS.TypeStyle.cardMeta)
+        }
+    }
+
+    /// Always available, never automated. Driving Terminal.app would mean
+    /// writing a shell script to disk or asking for Apple Events permission —
+    /// both worse security stories than a pipe, and neither works for
+    /// everyone's terminal of choice.
+    @ViewBuilder private var terminalFallback: some View {
+        DisclosureGroup("Having trouble?") {
+            VStack(alignment: .leading, spacing: DS.Space.s200) {
+                Text("You can sign in from any terminal instead:")
+                    .font(DS.TypeStyle.cardMeta)
+                    .foregroundStyle(DS.Color.Text.secondary)
                 HStack {
-                    TextField("Paste the confirmation code here if asked",
-                              text: $code)
-                        .textFieldStyle(.roundedBorder)
+                    Text("claude auth login")
                         .font(DS.TypeStyle.code)
-                        .onSubmit(submitCode)
-                    Button("Submit") { submitCode() }
-                        .disabled(code.isEmpty)
-                    Button("Cancel", role: .cancel) {
-                        Task { await login?.cancel() }
-                        running = false
+                        .textSelection(.enabled)
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("claude auth login",
+                                                       forType: .string)
                     }
-                    .keyboardShortcut(.cancelAction)
-                }
-            } else {
-                HStack {
-                    Button("Sign In with Claude") { start(.subscription) }
-                        .buttonStyle(.borderedProminent)
-                    Button("Use API Console instead") { start(.console) }
+                    Button("Check Again") {
+                        Task { await appState.services.refreshClaude(reason: .manual) }
+                    }
                 }
             }
+            .padding(.top, DS.Space.s100)
         }
+        .font(DS.TypeStyle.cardMeta)
     }
 
     private func start(_ mode: AuthLogin.Mode) {
         guard let claudeURL = appState.services.claudeURL else { return }
         let flow = AuthLogin()
         login = flow
-        output = []
-        running = true
+        transcript = []
+        failure = nil
+        codeHint = nil
+        phase = .starting
         Task {
             guard let events = try? await flow.start(claudeURL: claudeURL,
                                                      mode: mode) else {
-                running = false
+                failure = "Overture couldn't start `claude auth login`."
+                phase = .idle
                 return
             }
-            for await event in events {
-                switch event {
-                case .outputLine(let line):
-                    output.append(line)
-                case .finished:
-                    running = false
-                    await appState.services.refreshClaude(reason: .afterSignIn)
-                }
+            for await event in events { await handle(event) }
+        }
+    }
+
+    private func handle(_ event: AuthLogin.Event) async {
+        switch event {
+        case .opening:
+            phase = .awaitingBrowser
+        case .authorizationURL(let url):
+            authorizationURL = url
+            phase = .awaitingBrowser
+        case .awaitingCode:
+            codeHint = "awaiting"
+        case .message(let line):
+            transcript.append(line)
+        case .invalidCode(let text):
+            failure = "Paste the whole code, including the part after `#`."
+            transcript.append(text)
+            code = ""
+            codeFocused = true
+        case .failed(let text):
+            failure = text
+            transcript.append(text)
+            showDetails = true
+        case .succeeded:
+            transcript.append("Login successful.")
+        case .ended:
+            phase = .finished
+            code = ""
+            // Never trust the exit code — ask the CLI who it is now.
+            let readiness = await appState.services
+                .refreshClaude(reason: .afterSignIn)
+            if readiness?.auth.isSpawnable != true, failure == nil {
+                failure = "Sign-in didn't complete. You can try again, or "
+                    + "sign in from a terminal."
             }
         }
     }
 
     private func submitCode() {
-        let text = code
+        let pasted = code
         code = ""
-        Task { await login?.submit(text) }
+        Task { try? await login?.submit(pasted) }
     }
 
-
+    private func cancel() {
+        Task { await login?.cancel() }
+        code = ""
+        phase = .idle
+    }
 }
 
 struct MenuBarView: View {

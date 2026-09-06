@@ -31,14 +31,26 @@ public actor Subprocess {
         /// place is `ClaudeKit.ClaudeChildEnvironment.make(...)`.
         public var environment: [String: String]?
 
+        /// When true, stderr lines are also delivered on `stderrLines()`.
+        ///
+        /// Off by default, and it must stay that way for the streaming
+        /// session paths: their stdout carries NDJSON protocol traffic, and
+        /// interleaving stderr into a second consumed stream is a needless
+        /// way to introduce ordering bugs. Sign-in opts in because the CLI
+        /// reports login failures *only* on stderr — without this a failed
+        /// sign-in is a blank box.
+        public var streamsStderr: Bool
+
         public init(executable: URL,
                     arguments: [String] = [],
                     currentDirectory: URL? = nil,
-                    environment: [String: String]? = nil) {
+                    environment: [String: String]? = nil,
+                    streamsStderr: Bool = false) {
             self.executable = executable
             self.arguments = arguments
             self.currentDirectory = currentDirectory
             self.environment = environment
+            self.streamsStderr = streamsStderr
         }
     }
 
@@ -60,6 +72,8 @@ public actor Subprocess {
     private let stderrTailLimit = 64
 
     private var lineContinuation: AsyncStream<String>.Continuation?
+    private var stderrContinuation: AsyncStream<String>.Continuation?
+    private var stderrStream: AsyncStream<String>?
     private var exitContinuations: [CheckedContinuation<SubprocessExit, Never>] = []
     private var timedExitContinuations: [UUID: CheckedContinuation<SubprocessExit?, Never>] = [:]
     private var exitResult: SubprocessExit?
@@ -116,12 +130,20 @@ public actor Subprocess {
             onEOF: { [weak self] in
                 Task { await self?.stdoutClosed() }
             })
+        if configuration.streamsStderr {
+            let (errStream, errContinuation) =
+                AsyncStream.makeStream(of: String.self)
+            stderrStream = errStream
+            stderrContinuation = errContinuation
+        }
+        let errContinuation = stderrContinuation
         stderrReader = PipeLineReader(
             handle: stderrPipe.fileHandleForReading,
             onLine: { [weak self] line in
+                errContinuation?.yield(line)
                 Task { await self?.appendStderr(line) }
             },
-            onEOF: {})
+            onEOF: { errContinuation?.finish() })
 
         return stream
     }
@@ -183,6 +205,12 @@ public actor Subprocess {
     private func expireTimedWait(token: UUID) {
         timedExitContinuations.removeValue(forKey: token)?
             .resume(returning: nil)
+    }
+
+    /// Stderr as lines. Empty and immediately finished unless the
+    /// configuration set `streamsStderr`.
+    public func stderrLines() -> AsyncStream<String> {
+        stderrStream ?? AsyncStream { $0.finish() }
     }
 
     /// Last lines of stderr, for diagnostics on failure.

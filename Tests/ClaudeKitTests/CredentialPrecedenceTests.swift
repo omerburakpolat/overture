@@ -27,15 +27,19 @@ import Testing
         #expect(resolution.confidence == .reportedByCLI)
     }
 
-    /// Level 2, the measured blind spot: `auth status` still reports
-    /// `claude.ai`, so this can only be inferred from the variable's presence.
-    @Test func authTokenIsInferredBecauseTheCLIDoesNotReportIt() {
+    /// Level 2, the measured blind spot. `auth status` still reports
+    /// `claude.ai`, and a request made with a deliberately bogus value still
+    /// succeeded on the signed-in account — so this is surfaced as
+    /// information and must NOT claim to override the login. A false
+    /// "you are billed differently" warning is worse than none.
+    @Test func authTokenIsReportedWithoutClaimingAnOverride() {
         let resolution = CredentialPrecedence.resolve(
             account: signedIn(),
             childEnvironment: ["ANTHROPIC_AUTH_TOKEN": "secret"])
         #expect(resolution.level == 2)
         #expect(resolution.confidence == .inferredFromEnvironment)
-        #expect(resolution.overridesReportedLogin == true)
+        #expect(resolution.overridesReportedLogin == false)
+        #expect(resolution.explanation.contains("cannot confirm"))
     }
 
     /// Level 3 — the case that costs money silently. Overture spawns every

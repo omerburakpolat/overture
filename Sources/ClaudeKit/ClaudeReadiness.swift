@@ -89,12 +89,24 @@ public struct ProbeFailure: Error, Sendable, Equatable {
 }
 
 public enum AuthState: Sendable, Equatable {
-    case signedOut
+    /// Carries the probe's account even though nobody is signed in: the CLI
+    /// reports `forcedLoginMethod` regardless, and the sign-in view needs it
+    /// to offer only the methods policy allows.
+    case signedOut(ClaudeAccount)
     case signedIn(ClaudeAccount)
     case blockedByPolicy(ClaudeAccount.ForcedLoginMethod)
     case probeFailed(ProbeFailure)
 
+    /// The probe's account, signed in or not.
     public var account: ClaudeAccount? {
+        switch self {
+        case .signedIn(let account), .signedOut(let account): account
+        case .blockedByPolicy, .probeFailed: nil
+        }
+    }
+
+    /// The signed-in account only — for identity display.
+    public var signedInAccount: ClaudeAccount? {
         if case .signedIn(let account) = self { return account }
         return nil
     }

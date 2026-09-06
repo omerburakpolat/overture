@@ -105,7 +105,7 @@ import ProcessCore
         let check = ClaudeEnvironmentCheck(probes: Self.probes(
             authStdout: #"{"loggedIn": false}"#, authExit: .exited(code: 1)))
         let readiness = await check.run()
-        #expect(readiness.auth == .signedOut)
+        #expect(readiness.auth == .signedOut(ClaudeAccount(loggedIn: false)))
     }
 
     @Test func nonZeroExitWithNoOutputIsAProbeFailure() async {

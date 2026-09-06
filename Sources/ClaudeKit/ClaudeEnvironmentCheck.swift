@@ -88,8 +88,9 @@ public struct ClaudeEnvironmentCheck: Sendable {
         let environment = probes.childEnvironment()
 
         guard let executable = cli.executableURL, cli.isUsable else {
-            return ClaudeReadiness(cli: cli, auth: .signedOut,
-                                   checkedAt: probes.now())
+            return ClaudeReadiness(
+                cli: cli, auth: .signedOut(ClaudeAccount(loggedIn: false)),
+                checkedAt: probes.now())
         }
 
         let auth = await probeAuth(executable: executable,
@@ -191,7 +192,7 @@ public struct ClaudeEnvironmentCheck: Sendable {
             if let policy = account.forcedLoginMethod, policy == .gateway {
                 return .blockedByPolicy(policy)
             }
-            return .signedOut
+            return .signedOut(account)
         }
         return .signedIn(account)
     }

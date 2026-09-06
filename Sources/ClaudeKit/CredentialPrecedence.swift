@@ -94,17 +94,25 @@ public enum CredentialPrecedence {
                 explanation: "Requests go to \(account.apiProvider.displayName).")
         }
 
-        // 2. ANTHROPIC_AUTH_TOKEN — the blind spot. `auth status` does not
-        // reflect it, so this is inference from the variable's presence.
+        // 2. ANTHROPIC_AUTH_TOKEN. Anthropic documents this as outranking a
+        // stored login, but measured behaviour disagrees on a first-party
+        // setup: `auth status` does not report it, and a request made with a
+        // deliberately bogus value still succeeded on the signed-in account.
+        // It is therefore reported as information, not as an override —
+        // a false "you are being billed differently" warning is worse than
+        // no warning. Revisit if a gateway/proxy configuration proves it is
+        // honoured there.
         if isSet("ANTHROPIC_AUTH_TOKEN"), account.apiKeySource == nil {
             return Resolution(
                 source: .authTokenEnvironment,
                 evidence: ["ANTHROPIC_AUTH_TOKEN"],
                 confidence: .inferredFromEnvironment,
-                overridesReportedLogin: account.authMethod == .claudeAI,
+                overridesReportedLogin: false,
                 explanation: "ANTHROPIC_AUTH_TOKEN is set in this app's "
-                    + "environment. Claude Code prefers it over a signed-in "
-                    + "account, though `claude auth status` does not report it.")
+                    + "environment. Anthropic documents it as taking "
+                    + "precedence over a signed-in account, but Claude Code "
+                    + "does not report it, so Overture cannot confirm which "
+                    + "one a request will use.")
         }
 
         // 3. ANTHROPIC_API_KEY — the case that costs money silently.

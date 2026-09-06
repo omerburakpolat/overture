@@ -74,3 +74,55 @@ facts documented here independently).
   cheap to discover and survives future CLI changes.
 - Resolution #13: keep tokens-primary UI, but `--max-budget-usd` is confirmed
   as a hard brake for all auth types — per-run caps ship in M1.
+
+---
+
+## M1 auth findings (verified live, CLI v2.1.236)
+
+Measured by probing the shipped binary and by running `claude auth login` over
+pipes in a scratch `CLAUDE_CONFIG_DIR`. Recorded so nobody re-derives them.
+
+1. **`auth status --json` field set** is `loggedIn`, `authMethod`,
+   `apiProvider`, `forcedLoginMethod?`, `apiKeySource?`, `email?`, `orgId?`,
+   `orgName?`, `subscriptionType?`. Identity fields appear **only** when
+   `authMethod == "claude.ai"`.
+2. **Logged out prints valid JSON and then exits 1.** Parse stdout regardless
+   of the exit code; only fall back to the exit code when there is nothing to
+   parse. `{"loggedIn": false, "authMethod": "none", "apiProvider": "firstParty"}`.
+3. **`forcedLoginMethod` is reported in the JSON**, so Overture must not parse
+   `/Library/Application Support/ClaudeCode/managed-settings.json` itself. The
+   CLI resolves the policy; Overture only reflects it.
+4. **Env precedence, as the CLI actually reports it:**
+   `CLAUDE_CODE_USE_BEDROCK` → `third_party`/`bedrock`; `ANTHROPIC_API_KEY` →
+   an `apiKeySource` field; `CLAUDE_CODE_OAUTH_TOKEN` → `oauth_token` with
+   **every identity field dropped**; `ANTHROPIC_AUTH_TOKEN` → **not reported
+   at all**.
+5. **`ANTHROPIC_AUTH_TOKEN` is not honoured on a first-party setup.** A `-p`
+   turn with a deliberately bogus value still succeeded on the signed-in
+   account. Overture therefore reports it as information and does **not**
+   claim it overrides the login — a false billing warning is worse than none.
+6. **`claude auth login` needs no TTY.** It is `readline` + `stdout.write`,
+   not a full-screen UI. Over pipes with stdin at `/dev/null` it emits:
+
+   ```
+   Opening browser to sign in\u{2026}\n
+   If the browser didn't open, visit: <URL>\n
+   Paste code here if prompted >          ← no trailing newline
+   ```
+
+   The prompt's missing newline means a line-framed reader never delivers it,
+   so readiness for a code is inferred from the URL line instead.
+7. **The paste value is `code#state`.** The CLI splits on `#` and rejects
+   anything without both halves, so it must be forwarded verbatim.
+8. **Login failures are stderr-only** (`Login failed: …`,
+   `Invalid code. Please make sure the full code was copied.`), which is why
+   `Subprocess` grew an opt-in stderr stream.
+9. **`auth logout` terminates cleanly over pipes** (~1 s, exit 0,
+   `Successfully logged out from your Anthropic account.`). No timeout needed.
+10. **`CLAUDE_CONFIG_DIR` genuinely re-keys the credential store.** With it
+    set to an empty directory, `auth status` reports signed out while the
+    default store stays signed in — which is why stripping it from a child
+    (the pre-#13 behaviour) silently broke sign-in for anyone using it.
+11. **Gateway policy refuses `auth login` outright**:
+    `forceLoginMethod is 'gateway' in managed settings; run interactive
+    /login to authenticate.` Those users get the terminal instructions only.
