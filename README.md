@@ -97,6 +97,7 @@ Design and architecture specs live in [docs/specs/](docs/specs/):
 
 Release process: [docs/RELEASING.md](docs/RELEASING.md).
 Version history: [CHANGELOG.md](CHANGELOG.md).
+A rough roadmap, including what is *not* planned: [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
