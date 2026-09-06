@@ -17,10 +17,14 @@ a Done card flies back to In Progress.
 
 ## Download
 
-Grab the latest signed and notarized DMG from the
+```bash
+brew install --cask omerburakpolat/tap/overture
+```
+
+Or grab the signed and notarized DMG from the
 **[Releases page](https://github.com/omerburakpolat/overture/releases/latest)**,
-open it, and drag Overture to Applications. The app updates itself from then on
-via [Sparkle](https://sparkle-project.org).
+open it, and drag Overture to Applications. Either way the app updates itself
+from then on via [Sparkle](https://sparkle-project.org).
 
 Every release is signed with a Developer ID certificate and notarized by Apple,
 so Gatekeeper opens it without a warning. Verify for yourself if you like:
