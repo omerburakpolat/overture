@@ -30,8 +30,8 @@ struct LiveCoordinatorTests {
 
         // Services + project + card.
         let services = try AppServices(inMemory: true)
-        await services.runOnboarding()
-        guard case .ready = services.onboarding else {
+        await services.refreshClaude(reason: .launch)
+        guard services.claude?.canSpawn == true else {
             Issue.record("onboarding not ready on dev machine")
             return
         }
@@ -135,8 +135,8 @@ struct LiveWorktreeTests {
         try await runner.run(["commit", "-qm", "init"], in: repoURL)
 
         let services = try AppServices(inMemory: true)
-        await services.runOnboarding()
-        guard case .ready = services.onboarding else {
+        await services.refreshClaude(reason: .launch)
+        guard services.claude?.canSpawn == true else {
             Issue.record("onboarding not ready")
             return
         }

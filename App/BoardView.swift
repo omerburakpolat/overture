@@ -314,8 +314,10 @@ struct CardView: View {
         let amount = Text(card.totalCostUSD,
                           format: .currency(code: "USD")
                               .precision(.fractionLength(2)))
-        let exact = appState.services.authStatus?.isSubscription == false
-            && card.totalCostUSD > 0
+        // Keyed off the resolved credential, not `subscriptionType`: an
+        // ANTHROPIC_API_KEY in this app's environment overrides a
+        // subscription, and then the dollars are real money again.
+        let exact = appState.services.showsExactCosts && card.totalCostUSD > 0
         return exact ? amount : Text("~") + amount
     }
 }

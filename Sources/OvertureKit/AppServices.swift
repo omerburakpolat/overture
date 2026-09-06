@@ -5,19 +5,32 @@ import GitKit
 import VercelKit
 
 /// Composition root the app target builds once and injects. Owns the store,
-/// the process manager, and the onboarding outcome.
+/// the process manager, and what Overture knows about the Claude Code CLI.
 @MainActor
 @Observable
 public final class AppServices {
     public let container: ModelContainer
     public let processManager: ProcessManager
-    public private(set) var onboarding: OnboardingCheck.Outcome?
 
-    /// Resolved claude executable — nil until onboarding reaches `.ready`.
+    /// The last probe of the CLI: where it is, whether it is usable, who it
+    /// is signed in as, and which credential the app's own spawns will use.
+    /// Nil until the first probe completes.
+    public private(set) var claude: ClaudeReadiness?
+
+    /// Set when a running session failed to authenticate, so the board can
+    /// offer a sign-in rather than showing a stack trace. Cleared by a probe
+    /// that finds a working credential.
+    public private(set) var authInterrupted = false
+
+    private var environmentCheck = ClaudeEnvironmentCheck()
+    private var lastRefresh: Date?
+    private var refreshInFlight = false
+
+    /// Resolved `claude` executable. Present whenever a binary was found —
+    /// including when it is signed out or too old, because sign-in and the
+    /// path override both need something to run.
     public var claudeURL: URL? {
-        if let claudeURLOverride { return claudeURLOverride }
-        if case .ready(let readiness) = onboarding { return readiness.claudeURL }
-        return nil
+        claudeURLOverride ?? claude?.cli.executableURL
     }
 
     /// Test seam: a stand-in `claude` (a script replaying recorded
@@ -25,9 +38,24 @@ public final class AppServices {
     /// the app.
     public var claudeURLOverride: URL?
 
-    public var authStatus: AuthStatus? {
-        if case .ready(let readiness) = onboarding { return readiness.auth }
-        return nil
+    public var account: ClaudeAccount? { claude?.auth.account }
+
+    /// Whether a session can start right now.
+    public var canSpawn: Bool { claudeURLOverride != nil || claude?.canSpawn == true }
+
+    /// Resolution #13: dollars are shown as real money only when the user is
+    /// actually billed per token. Keyed off the resolved credential rather
+    /// than `subscriptionType`, because an `ANTHROPIC_API_KEY` in this app's
+    /// environment overrides a subscription and makes the dollars real again.
+    public var showsExactCosts: Bool {
+        guard let credential = claude?.effectiveCredential else { return false }
+        switch credential.source {
+        case .apiKeyEnvironment, .apiKeyHelper, .authTokenEnvironment,
+             .cloudProvider:
+            return true
+        case .oauthTokenEnvironment, .profile, .storedLogin, .none:
+            return account?.isSubscription == false
+        }
     }
 
     /// `journalURL` lets tests keep their orphan journal away from the real
@@ -43,8 +71,64 @@ public final class AppServices {
                 ?? supportDir.appendingPathComponent("running-agents.json"))
     }
 
-    public func runOnboarding() async {
-        onboarding = await OnboardingCheck.run()
+    /// Why a probe is happening. Only `.manual` bypasses the debounce — the
+    /// rest fire on app focus and wake, which can arrive in bursts.
+    public enum RefreshReason: Sendable {
+        case launch, manual, becameActive, wake, afterSignIn, afterAuthFailure
+
+        var bypassesDebounce: Bool {
+            switch self {
+            case .manual, .afterSignIn, .afterAuthFailure, .launch: true
+            case .becameActive, .wake: false
+            }
+        }
+    }
+
+    public static let refreshDebounce: TimeInterval = 30
+
+    @discardableResult
+    public func refreshClaude(reason: RefreshReason = .manual) async -> ClaudeReadiness? {
+        if !reason.bypassesDebounce, let lastRefresh,
+           Date().timeIntervalSince(lastRefresh) < Self.refreshDebounce {
+            return claude
+        }
+        guard !refreshInFlight else { return claude }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
+
+        let readiness = await environmentCheck.run()
+        claude = readiness
+        lastRefresh = Date()
+        if readiness.canSpawn { authInterrupted = false }
+        return readiness
+    }
+
+    /// Runs `claude auth logout`. This signs the CLI out everywhere on the
+    /// machine, not just for Overture — the caller must have confirmed that.
+    public func signOutOfClaude() async -> Result<Void, ProbeFailure> {
+        guard let claudeURL = claude?.cli.executableURL else {
+            return .failure(ProbeFailure(kind: .launchFailed("no CLI found")))
+        }
+        let result = await environmentCheck.signOut(claudeURL: claudeURL)
+        await refreshClaude(reason: .manual)
+        return result
+    }
+
+    /// A session reported an authentication failure. Never auto-retried
+    /// (spec 01 §7.4) — re-probe and let the UI offer a sign-in.
+    public func handleAuthenticationFailure() async {
+        authInterrupted = true
+        await refreshClaude(reason: .afterAuthFailure)
+    }
+
+    /// Test seam: installs a readiness snapshot without running a probe.
+    public func applyForTesting(_ readiness: ClaudeReadiness) {
+        claude = readiness
+    }
+
+    /// Lets tests inject a probe set instead of touching the real machine.
+    public func useEnvironmentCheck(_ check: ClaudeEnvironmentCheck) {
+        environmentCheck = check
     }
 
     /// Done cards leave the board after 14 days (spec 04 assumption #7);

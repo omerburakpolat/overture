@@ -562,6 +562,26 @@ public final class SessionCoordinator {
         }
     }
 
+    /// A session could not authenticate. The card stops with a message the
+    /// user can act on, and the app re-probes so Settings and the board
+    /// banner reflect reality.
+    func handleAuthenticationFailure(cardID: UUID) {
+        live[cardID, default: .init()].lastError =
+            "Claude Code could not authenticate. Sign in again to continue."
+        appendLive(cardID, .init(
+            id: UUID().uuidString, kind: .notice,
+            text: "Claude Code could not authenticate. This run stopped — "
+                + "sign in again, then resume the card."))
+        if let card = fetchCard(cardID) {
+            try? BoardEngine.apply(.errored, to: card, in: context)
+            ActivityLog.record(.agentFinished,
+                               "Stopped: Claude Code could not authenticate",
+                               on: card, in: context)
+            try? context.save()
+        }
+        Task { [services] in await services.handleAuthenticationFailure() }
+    }
+
     // MARK: - Event pump
 
     private func pump(_ stream: AsyncStream<SupervisorEvent>,
@@ -696,10 +716,18 @@ public final class SessionCoordinator {
             try? context.save()
 
         case .apiRetry(let retry):
-            if retry.errorCategory == "rate_limit" {
+            switch retry.errorCategory {
+            case "rate_limit":
                 appendLive(cardID, .init(
                     id: UUID().uuidString, kind: .notice,
                     text: "Claude usage limit — retrying automatically."))
+            case "authentication_failed":
+                // Never auto-retried (spec 01 §7.4): retrying a dead
+                // credential burns the run and tells the user nothing. Stop,
+                // say so specifically, and let the UI offer a sign-in.
+                handleAuthenticationFailure(cardID: cardID)
+            default:
+                break
             }
 
         case .event(let claudeEvent):

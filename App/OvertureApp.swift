@@ -154,7 +154,7 @@ struct RootView: View {
         }
         .task {
             AppDelegate.shared?.state = appState
-            await appState.services.runOnboarding()
+            await appState.services.refreshClaude(reason: .launch)
             _ = await appState.services.reconcileOrphans()
             appState.services.autoArchiveDoneCards()
             onboardingDone = true
@@ -182,8 +182,7 @@ struct RootView: View {
 
     private var needsOnboardingSheet: Bool {
         guard onboardingDone else { return false }
-        if case .ready = appState.services.onboarding { return false }
-        return true
+        return appState.services.claude?.canSpawn != true
     }
 }
 
@@ -200,39 +199,12 @@ struct OnboardingView: View {
                 .font(DS.TypeStyle.emptyStateBody)
                 .foregroundStyle(DS.Color.Text.secondary)
 
-            switch appState.services.onboarding {
-            case .binaryMissing(let searched):
-                checklistRow(icon: DS.Icon.error, tint: DS.Status.danger,
-                             title: "Claude Code not found",
-                             detail: "Install it (brew install claude-code), "
-                                + "then retry. Searched: "
-                                + searched.joined(separator: ", "))
-            case .versionBelowMinimum(let found):
-                checklistRow(icon: DS.Icon.error, tint: DS.Status.danger,
-                             title: "Claude Code \(found) is too old",
-                             detail: "Overture needs \(OnboardingMinimum.text)+."
-                                + " Update with: brew upgrade claude-code")
-            case .versionUnreadable:
-                checklistRow(icon: DS.Icon.error, tint: DS.Status.caution,
-                             title: "Could not read the CLI version",
-                             detail: "Run `claude --version` in a terminal to "
-                                + "check the installation.")
-            case .notAuthenticated:
-                checklistRow(icon: DS.Icon.awaitingPermission,
-                             tint: DS.Status.caution,
-                             title: "Claude Code isn’t signed in",
-                             detail: "Sign in below — your browser opens on "
-                                + "Anthropic’s login page and the CLI stores "
-                                + "the credentials. Overture never sees them.")
-                SignInSection()
-            case .ready, .none:
-                EmptyView()
-            }
+            checklist
 
             HStack {
                 Spacer()
                 Button("Retry") {
-                    Task { await appState.services.runOnboarding() }
+                    Task { await appState.services.refreshClaude(reason: .manual) }
                 }
                 .keyboardShortcut(.defaultAction)
             }
@@ -240,6 +212,123 @@ struct OnboardingView: View {
         .padding(DS.Space.s600)
         .frame(width: DS.Layout.Sheet.narrow)
         .background(DS.Color.Surface.overlay)
+    }
+
+    /// Resolution #12, on the two-axis model: the CLI row and the sign-in row
+    /// are independent, so a signed-out user still sees where their CLI is.
+    @ViewBuilder private var checklist: some View {
+        if let readiness = appState.services.claude {
+            switch readiness.cli.installation {
+            case .missing(let searched):
+                checklistRow(icon: DS.Icon.error, tint: DS.Status.danger,
+                             title: "Claude Code not found",
+                             detail: "Install it with `brew install --cask "
+                                + "claude-code`, then check again. Searched: "
+                                + searched.joined(separator: ", "))
+            case .found(let url):
+                cliVersionRow(readiness.cli, path: url.path)
+            }
+
+            if readiness.cli.isUsable {
+                authRow(readiness.auth)
+            }
+            credentialRow(readiness)
+        } else {
+            checklistRow(icon: DS.Icon.idle, tint: DS.Status.neutral,
+                         title: "Checking your Claude Code setup…",
+                         detail: "Looking for the CLI and asking who it is "
+                            + "signed in as.")
+        }
+    }
+
+    @ViewBuilder
+    private func cliVersionRow(_ cli: CLIStatus, path: String) -> some View {
+        switch cli.version {
+        case .belowMinimum(let found):
+            checklistRow(
+                icon: DS.Icon.error, tint: DS.Status.danger,
+                title: "Claude Code \(found) is too old",
+                detail: "Overture is tested against "
+                    + "\(ClaudeEnvironmentCheck.minimumTestedVersion) and newer. "
+                    + "Update with `brew upgrade --cask claude-code`.")
+        case .unreadable:
+            checklistRow(
+                icon: DS.Icon.error, tint: DS.Status.caution,
+                title: "Could not read the CLI version",
+                detail: "Run `claude --version` in a terminal to check the "
+                    + "installation at \(path).")
+        case .untested(let found):
+            // Newer than tested warns, never blocks (spec 01 §7.1).
+            checklistRow(
+                icon: DS.Icon.info, tint: DS.Status.caution,
+                title: "Claude Code \(found)",
+                detail: "Newer than the version Overture is tested against "
+                    + "(\(ClaudeEnvironmentCheck.minimumTestedVersion)). This "
+                    + "should be fine — please report anything that looks off.")
+        case .supported(let found):
+            checklistRow(icon: DS.Icon.finished, tint: DS.Status.success,
+                         title: "Claude Code \(found)", detail: path)
+        case nil:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func authRow(_ auth: AuthState) -> some View {
+        switch auth {
+        case .signedIn(let account):
+            checklistRow(
+                icon: DS.Icon.finished, tint: DS.Status.success,
+                title: account.email ?? account.authMethod.displayName,
+                detail: account.isIdentityless
+                    ? "Claude Code didn't report an account for this credential."
+                    : [account.orgName, account.subscriptionType]
+                        .compactMap { $0 }.joined(separator: " · "))
+        case .signedOut:
+            checklistRow(
+                icon: DS.Icon.awaitingPermission, tint: DS.Status.caution,
+                title: "Claude Code isn't signed in",
+                detail: "Sign in below. Your browser opens Anthropic's login "
+                    + "page and the CLI stores the credentials — Overture "
+                    + "never sees them.")
+            SignInSection()
+        case .blockedByPolicy(let method):
+            checklistRow(
+                icon: DS.Icon.error, tint: DS.Status.caution,
+                title: "Your organization manages this sign-in",
+                detail: ClaudeAccount(loggedIn: false,
+                                      forcedLoginMethod: method)
+                    .policyExplanation ?? "Sign in from a terminal.")
+        case .probeFailed(let failure):
+            checklistRow(
+                icon: DS.Icon.error, tint: DS.Status.danger,
+                title: "Couldn't ask the CLI who's signed in",
+                detail: failure.summary
+                    + (failure.stderrTail.isEmpty ? ""
+                       : "\n" + failure.stderrTail.suffix(3).joined(separator: "\n")))
+        }
+    }
+
+    /// Shown only when it changes what the user should expect — an
+    /// environment credential outranking their login, or a shell that
+    /// defines credentials Overture cannot see.
+    @ViewBuilder
+    private func credentialRow(_ readiness: ClaudeReadiness) -> some View {
+        if let credential = readiness.effectiveCredential,
+           credential.overridesReportedLogin {
+            checklistRow(icon: DS.Icon.info, tint: DS.Status.caution,
+                         title: "Check which credential your agents will use",
+                         detail: credential.explanation)
+        }
+        if let divergence = readiness.shellDivergence, divergence.hasDivergence {
+            checklistRow(
+                icon: DS.Icon.info, tint: DS.Status.neutral,
+                title: "Your login shell defines credentials Overture can't see",
+                detail: divergence.names.map(\.rawValue)
+                    .joined(separator: ", ")
+                    + " — `claude` in Terminal and agents in Overture may use "
+                    + "different credentials.")
+        }
     }
 
     private func checklistRow(icon: String, tint: DS.StatusColor,
@@ -259,10 +348,6 @@ struct OnboardingView: View {
         .background(tint.tint, in: RoundedRectangle(
             cornerRadius: DS.Radius.panel))
     }
-}
-
-enum OnboardingMinimum {
-    static let text = "2.1.231"
 }
 
 /// App-initiated `claude auth login` (see AuthLogin): relays CLI output and
@@ -313,7 +398,7 @@ struct SignInSection: View {
     }
 
     private func start(_ mode: AuthLogin.Mode) {
-        guard let claudeURL = claudeExecutable() else { return }
+        guard let claudeURL = appState.services.claudeURL else { return }
         let flow = AuthLogin()
         login = flow
         output = []
@@ -330,7 +415,7 @@ struct SignInSection: View {
                     output.append(line)
                 case .finished:
                     running = false
-                    await appState.services.runOnboarding()
+                    await appState.services.refreshClaude(reason: .afterSignIn)
                 }
             }
         }
@@ -342,13 +427,7 @@ struct SignInSection: View {
         Task { await login?.submit(text) }
     }
 
-    /// Auth probing can fail before onboarding resolves a URL — rediscover.
-    private func claudeExecutable() -> URL? {
-        if let url = appState.services.claudeURL { return url }
-        return HostEnvironment.claudeCandidatePaths
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-            .map(URL.init(fileURLWithPath:))
-    }
+
 }
 
 struct MenuBarView: View {
@@ -412,21 +491,58 @@ struct SettingsView: View {
                 LabeledContent("CLI") {
                     Text(appState.services.claudeURL?.path ?? "not found")
                         .font(DS.TypeStyle.code)
+                        .textSelection(.enabled)
                 }
-                if let auth = appState.services.authStatus {
-                    LabeledContent("Account") {
-                        Text(auth.email ?? "signed in")
+                if let version = appState.services.claude?.cli.version?.semantic {
+                    LabeledContent("Version") { Text(version.description) }
+                }
+                if let account = appState.services.account {
+                    LabeledContent("Signed in as") {
+                        Text(account.email ?? account.authMethod.displayName)
                     }
-                    LabeledContent("Billing") {
-                        Text(auth.isSubscription
-                             ? "Subscription (\(auth.subscriptionType ?? ""))"
-                             : "API key")
+                    if let organization = account.orgName {
+                        LabeledContent("Organization") { Text(organization) }
                     }
+                    LabeledContent("Plan") {
+                        Text(account.subscriptionType
+                             ?? account.apiProvider.displayName)
+                    }
+                }
+            }
+
+            // The honest row: which credential the app's own agents will use.
+            // `claude auth status` alone can't answer this, because an
+            // environment credential outranks the login it reports.
+            if let credential = appState.services.claude?.effectiveCredential {
+                Section("Effective credential") {
+                    LabeledContent("Agents will use") {
+                        Text(credential.explanation)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    if credential.overridesReportedLogin {
+                        Label("This overrides the account signed in above.",
+                              systemImage: DS.Icon.error)
+                            .font(DS.TypeStyle.cardMeta)
+                            .foregroundStyle(DS.Status.caution.text)
+                    }
+                    if !credential.evidence.isEmpty {
+                        LabeledContent("From") {
+                            Text(credential.evidence.map(\.rawValue)
+                                    .joined(separator: ", "))
+                                .font(DS.TypeStyle.code)
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Button("Check Again") {
+                    Task { await appState.services.refreshClaude(reason: .manual) }
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: DS.Layout.settingsWindowSize.width,
-               height: DS.Layout.settingsWindowSize.height)
+        .frame(width: DS.Layout.Sheet.narrow, height: 380)
+        .task { await appState.services.refreshClaude(reason: .becameActive) }
     }
 }
