@@ -12,6 +12,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build/release"
 TEAM="${OVERTURE_TEAM_ID:-B2DYXY7U9Y}"
 
+# App/THIRD-PARTY-NOTICES.md is the copy that gets bundled (App/ is a
+# synchronized group); the root one is what people read on GitHub. They
+# must not drift — a stale bundled copy is an attribution failure that
+# nothing else would catch.
+if ! cmp -s "$ROOT/THIRD-PARTY-NOTICES.md" "$ROOT/App/THIRD-PARTY-NOTICES.md"; then
+  echo "ERROR: THIRD-PARTY-NOTICES.md differs from App/THIRD-PARTY-NOTICES.md" >&2
+  echo "Run: cp THIRD-PARTY-NOTICES.md App/THIRD-PARTY-NOTICES.md" >&2
+  exit 1
+fi
+
 rm -rf "$BUILD"
 xcodebuild -project "$ROOT/Overture.xcodeproj" -scheme Overture \
   -configuration Release -destination 'platform=macOS,arch=arm64' \

@@ -131,11 +131,24 @@ jobs:
           BIN="$(find build/release/DerivedData/SourcePackages -type d \
             -path '*artifacts/sparkle/Sparkle/bin' | head -1)"
           mkdir -p dist && mv build/Overture-*.dmg dist/
-          echo "$SPARKLE_ED_PRIVATE_KEY" | "$BIN/generate_appcast" \
+          # generate_appcast warns and still exits 0 when the private key does
+          # not match the SUPublicEDKey baked into the app — producing a
+          # well-formed appcast signed with the wrong key, which every existing
+          # install would reject. Silent, green, and unrecoverable without a
+          # manual re-release. Make it fatal.
+          set -o pipefail
+          out="$(echo "$SPARKLE_ED_PRIVATE_KEY" | "$BIN/generate_appcast" \
             --ed-key-file - \
             --download-url-prefix "https://github.com/omerburakpolat/overture/releases/download/${GITHUB_REF_NAME}/" \
             --link "https://github.com/omerburakpolat/overture" \
-            dist/
+            dist/ 2>&1)" || { echo "$out"; exit 1; }
+          echo "$out"
+          case "$out" in
+            *"does not match key EdDSA"*)
+              echo "::error::SPARKLE_ED_PRIVATE_KEY does not match the SUPublicEDKey in App/Info.plist. Publishing this appcast would break auto-update for every existing install."
+              exit 1
+              ;;
+          esac
       - name: Publish release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -143,3 +156,8 @@ jobs:
             dist/Overture-*.dmg
             dist/appcast.xml
           generate_release_notes: true
+          # SUFeedURL points at /releases/latest/download/appcast.xml, and the
+          # action defaults make_latest=true for every tag. Without this,
+          # tagging v0.2.0-rc1 would make the RC "latest" and hand its appcast
+          # to every stable install. GitHub excludes prereleases from /latest/.
+          prerelease: ${{ contains(github.ref_name, '-') }}
