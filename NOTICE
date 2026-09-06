@@ -2,6 +2,10 @@ Overture — NOTICE
 
 The Overture source code is licensed under the MIT License (see LICENSE).
 
+Third-party software bundled in the distributed application, and the
+license text those licenses require to be reproduced, is listed in
+THIRD-PARTY-NOTICES.md. Sparkle is currently the only such component.
+
 The following are explicitly EXCLUDED from the MIT license grant:
 
 - The Overture name and app icon.

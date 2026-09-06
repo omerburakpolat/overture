@@ -12,13 +12,9 @@ updates:
     labels:
       - dependencies
 
-  # Swift Package Manager: Sparkle is the only third-party dependency, and it
-  # sits directly in the update path, so a security fix there matters.
-  - package-ecosystem: swift
-    directory: /
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: "deps"
-    labels:
-      - dependencies
+# Deliberately no `package-ecosystem: swift` entry. Dependabot's Swift support
+# reads Package.swift, and this repo's Package.swift declares six local targets
+# and no remote dependencies at all — Sparkle is an XCRemoteSwiftPackageReference
+# inside Overture.xcodeproj, which Dependabot cannot see. An entry here would
+# have looked like coverage while watching nothing. Sparkle is bumped by hand;
+# see docs/RELEASING.md.
