@@ -40,35 +40,97 @@ public final class BoardStore {
         guard let card = project.cards.first(where: { $0.id == cardID }) else {
             return
         }
+        perform(.drag(to: column), on: card)
+    }
+
+    /// Applies one explicit transition (Plan / Start / Reopen buttons) the
+    /// same way a drag does: validate, save, run the effects, toast on
+    /// rejection.
+    public func perform(_ transition: CardTransition, on card: Card) {
         do {
-            let effects = try BoardEngine.apply(.drag(to: column), to: card,
+            let effects = try BoardEngine.apply(transition, to: card,
                                                 in: context)
             try context.save()
             Task { await coordinator.execute(effects, for: card) }
         } catch let error as TransitionError {
-            toast = Toast(message: error.reason)
-            Task { [id = toast?.id] in
-                try? await Task.sleep(for: .seconds(4))
-                if toast?.id == id { toast = nil }
-            }
+            showToast(error.reason)
         } catch {
-            toast = Toast(message: "\(error)")
+            showToast("\(error)")
         }
     }
+
+    private func showToast(_ message: String) {
+        let toast = Toast(message: message)
+        self.toast = toast
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            if self.toast?.id == toast.id { self.toast = nil }
+        }
+    }
+
+    /// Spec 04 §3.1: titles are required and at most this long — they feed
+    /// branch names, commit subjects and PR titles.
+    public static let titleLimit = 120
 
     /// Creates a ticket in Backlog.
     @discardableResult
     public func createCard(title: String, details: String,
                            tags: [Tag]) -> Card {
         let last = cards(in: .backlog).last?.columnOrder
-        let card = Card(title: title, details: details, project: project)
+        let card = Card(
+            title: String(title.trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(Self.titleLimit)),
+            details: details.trimmingCharacters(in: .whitespacesAndNewlines),
+            project: project)
         card.columnOrder = ColumnOrdering.between(last, nil)
         card.tags = tags
         context.insert(card)
-        context.insert(ActivityEvent(card: card, kind: .cardCreated,
-                                     summary: "Ticket created"))
+        // Setting `card.project` alone updates the inverse silently — nothing
+        // observing `project.cards` (every column) hears about it, and the
+        // new ticket never appears. Append through the observed array.
+        project.cards.append(card)
+        ActivityLog.record(.cardCreated, "Ticket created", on: card,
+                           in: context)
         try? context.save()
         return card
+    }
+
+    /// Edits the ticket itself — title, description, tags. Records what
+    /// changed as one activity row so the thread shows the edit in place.
+    /// Returns false when nothing changed or the title is unusable (empty,
+    /// or over ``titleLimit`` — the latter also toasts).
+    @discardableResult
+    public func updateTicket(_ card: Card, title: String, details: String,
+                             tags: [Tag]) -> Bool {
+        let newTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newDetails = details.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newTitle.isEmpty else { return false }
+        guard newTitle.count <= Self.titleLimit else {
+            showToast("Titles are limited to \(Self.titleLimit) characters.")
+            return false
+        }
+        var changes: [String] = []
+        if newTitle != card.title {
+            card.title = newTitle
+            changes.append("title")
+        }
+        // Compare like with like: descriptions saved before trimming existed
+        // must not count as edited when only the title changed.
+        if newDetails != card.details.trimmingCharacters(
+            in: .whitespacesAndNewlines) {
+            card.details = newDetails
+            changes.append("description")
+        }
+        if Set(tags.map(\.id)) != Set(card.tags.map(\.id)) {
+            card.tags = tags
+            changes.append("tags")
+        }
+        guard !changes.isEmpty else { return false }
+        ActivityLog.record(.ticketEdited,
+                           "Edited " + changes.joined(separator: ", "),
+                           on: card, in: context)
+        try? context.save()
+        return true
     }
 
     // MARK: - Approve → Done (spec 04 §9)
@@ -108,6 +170,9 @@ public final class BoardStore {
                     cardTitle: card.title, cardBody: card.details,
                     defaultBranch: project.defaultBranch, repo: repo)
                 card.worktreePath = nil
+                ActivityLog.record(.merged,
+                                   "Merged into \(project.defaultBranch)",
+                                   on: card, in: context)
             case .openPR:
                 guard let branch = card.branchName else {
                     throw MergeService.MergeError.missingBranch
@@ -122,10 +187,14 @@ public final class BoardStore {
                 card.prNumber = pr.number
                 card.prURL = pr.url
                 card.worktreePath = nil
+                ActivityLog.record(.prOpened, "Opened PR #\(pr.number)",
+                                   on: card, in: context)
             case .commitSingleDir:
                 try await service.commitSingleDir(
                     cardID: card.id, cardTitle: card.title,
                     cardBody: card.details, repo: repo)
+                ActivityLog.record(.merged, "Committed the changes",
+                                   on: card, in: context)
             case .leaveUncommitted:
                 await service.leaveUncommitted(cardID: card.id, repo: repo)
             case .justMarkDone:
@@ -247,15 +316,28 @@ public final class BoardStore {
     }
 
     public func reopen(_ card: Card) {
+        perform(.reopen, on: card)
+    }
+
+    /// Continuing a Done card from its thread (spec 04 §2.2): the message
+    /// the user just wrote IS the resume, so the reopen runs without its own
+    /// execution effect — otherwise two spawns race for the card.
+    public func reopenForChat(_ card: Card) {
         do {
             let effects = try BoardEngine.apply(.reopen, to: card, in: context)
+                .filter { $0 != .startExecution }
             try context.save()
             Task { await coordinator.execute(effects, for: card) }
-        } catch {}
+        } catch let error as TransitionError {
+            showToast(error.reason)
+        } catch {
+            showToast("\(error)")
+        }
     }
 
     public func archive(_ card: Card) {
         try? BoardEngine.apply(.archive, to: card, in: context)
+        ActivityLog.record(.userNote, "Archived", on: card, in: context)
         try? context.save()
     }
 }

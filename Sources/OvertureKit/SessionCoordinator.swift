@@ -2,6 +2,7 @@ import Accessibility
 import Foundation
 import SwiftData
 import ClaudeKit
+import ProcessCore
 import GitKit
 
 /// One pending `can_use_tool` surfaced on a card.
@@ -16,7 +17,10 @@ public struct PendingPermission: Sendable, Identifiable, Equatable {
 }
 
 /// One live transcript row (streamed; history comes from TranscriptReader).
-public struct LiveChatItem: Sendable, Identifiable {
+/// `id` is the CLI's own message `uuid` (or `tool_use` id) whenever the
+/// stream carries one, so `CardThread` can drop the row the moment the
+/// transcript on disk contains it.
+public struct LiveChatItem: Sendable, Identifiable, Equatable {
     public enum Kind: Sendable, Equatable {
         case user
         case assistantText
@@ -26,6 +30,12 @@ public struct LiveChatItem: Sendable, Identifiable {
     public var id: String
     public var kind: Kind
     public var text: String
+    public var at: Date = .now
+
+    /// Rows Overture appended itself (the user's own message, before the
+    /// CLI echoes it back with its transcript uuid) carry this prefix.
+    public static let provisionalPrefix = "local-"
+    public var isProvisional: Bool { id.hasPrefix(Self.provisionalPrefix) }
 }
 
 /// Bridges CardSupervisor event streams to the board: transitions via
@@ -42,6 +52,10 @@ public final class SessionCoordinator {
         public var transcript: [LiveChatItem] = []
         public var streamingText = ""
         public var lastError: String?
+        /// Bumped whenever the transcript on disk has likely grown (turn
+        /// ended, process ended, session started) — the thread view reloads
+        /// history on change and drops the live rows it now finds on disk.
+        public var historyGeneration = 0
     }
 
     public private(set) var live: [UUID: LiveState] = [:]
@@ -76,8 +90,51 @@ public final class SessionCoordinator {
     public func startPlanSession(for card: Card) async {
         guard let project = card.project else { return }
         let prompt = Self.planPrompt(for: card)
+        if let supervisor = await services.processManager.supervisor(for: card.id) {
+            // The composer invites a chat before Plan; that process is the
+            // card's one primary thread (spec 04 §4), so flip it into plan
+            // mode rather than spawning a second one for the same card.
+            await redirect(supervisor, card: card, mode: .plan,
+                           runKind: .planning, message: prompt,
+                           interruptInFlight: true)
+            return
+        }
         await spawn(card: card, project: project, profile: .plan,
                     runKind: .planning, kind: .plan, initialMessage: prompt)
+    }
+
+    /// Cards whose in-flight turn Overture itself cut short (Stop, or a
+    /// redirect): the error result that follows is not a failure to report.
+    private var interruptsPending: Set<UUID> = []
+
+    /// Re-points a live primary process at a new run kind: optionally cuts
+    /// short a turn in flight, flips the permission posture, records the
+    /// start, and sends the message that begins the new run.
+    ///
+    /// `interruptInFlight` is false for the plan→build flip: after an
+    /// ExitPlanMode allow the turn in flight already IS the build (spec 04
+    /// §6, same session and context), so the message steers it (§7.3)
+    /// instead of aborting it. When a turn is cut short, the flip waits for
+    /// its error result so that result still carries the old run kind.
+    private func redirect(_ supervisor: CardSupervisor, card: Card,
+                          mode: ClaudeCLI.PermissionProfile, runKind: RunKind,
+                          message: String, interruptInFlight: Bool) async {
+        if interruptInFlight, await supervisor.activity == .working {
+            interruptsPending.insert(card.id)
+            try? await supervisor.interrupt(cancelQueued: true)
+            let deadline = ContinuousClock.now + .seconds(5)
+            while await supervisor.activity == .working,
+                  ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        try? await supervisor.setPermissionMode(mode.modeFlag,
+                                                newRunKind: runKind)
+        appendLive(card.id, Self.provisionalUserRow(message))
+        ActivityLog.record(.agentStarted, Self.startSummary(runKind),
+                           on: card, in: context)
+        try? context.save()
+        try? await supervisor.send(userText: message)
     }
 
     /// Starts (or resumes) autonomous execution. Enforces the project's run
@@ -95,18 +152,23 @@ public final class SessionCoordinator {
             try? context.save()
             return
         }
+        let profile = project.claudePermissionMode.profile
+        let continuation = "Continue working on this ticket:\n\n\(Self.ticketText(card))"
         if let supervisor = await services.processManager.supervisor(for: card.id) {
-            // Plan session flipping to build: same process, same context.
-            try? await supervisor.setPermissionMode(
-                project.claudePermissionMode.profile.modeFlag,
-                newRunKind: .autonomousRun)
-            try? await supervisor.send(userText:
-                "The plan is approved — implement it now.")
+            // Same process, same context: a plan session flipping to build
+            // is told its plan is approved; a chat or finished build is told
+            // to carry on with the ticket.
+            let wasPlanning = await supervisor.runKind == .planning
+            await redirect(supervisor, card: card, mode: profile,
+                           runKind: .autonomousRun,
+                           message: wasPlanning
+                               ? "The plan is approved — implement it now."
+                               : continuation,
+                           interruptInFlight: !wasPlanning)
             return
         }
-        let profile = project.claudePermissionMode.profile
         let message = card.sessions.contains(where: { $0.role == .primary })
-            ? "Continue working on this ticket:\n\n\(Self.ticketText(card))"
+            ? continuation
             : Self.executionPrompt(for: card)
         await spawn(card: card, project: project, profile: profile,
                     runKind: .autonomousRun, kind: .work,
@@ -117,8 +179,17 @@ public final class SessionCoordinator {
     public func sendChat(_ message: String, to card: Card) async {
         guard let project = card.project else { return }
         if let supervisor = await services.processManager.supervisor(for: card.id) {
-            appendLive(card.id, .init(id: UUID().uuidString, kind: .user,
-                                      text: message))
+            // Mid-turn, the message steers the running agent (spec 04 §7.3)
+            // and the run keeps its kind. Between turns it is a chat turn:
+            // manual permissions, and its result never moves the card
+            // (resolutions #4, #10) — so the idle process is re-posed first.
+            if await supervisor.activity == .idle,
+               await supervisor.runKind != .interactiveChat {
+                try? await supervisor.setPermissionMode(
+                    ClaudeCLI.PermissionProfile.askMe.modeFlag,
+                    newRunKind: .interactiveChat)
+            }
+            appendLive(card.id, Self.provisionalUserRow(message))
             try? await supervisor.send(userText: message)
             return
         }
@@ -145,10 +216,42 @@ public final class SessionCoordinator {
         }
         try? await supervisor.answerPermission(requestID: requestID,
                                                verdict: verdict)
+        let answered = live[card.id]?.pendingPermissions.first { $0.id == requestID }
         live[card.id]?.pendingPermissions.removeAll { $0.id == requestID }
         if card.subState == .needsInput {
             card.subState = .running
         }
+        if let answered, let pending {
+            ActivityLog.record(
+                .toolUse,
+                Self.decisionSummary(for: pending, toolName: answered.toolName,
+                                     allow: allow, denyMessage: denyMessage),
+                on: card, in: context)
+            try? context.save()
+        }
+    }
+
+    /// The persisted one-liner for a permission decision (spec 04 §3.1 lists
+    /// them in the activity feed). Only a command or path is kept — never
+    /// the model's prose or raw tool input (spec 02 §3.1).
+    nonisolated static func decisionSummary(for request: PermissionRequest,
+                                            toolName: String, allow: Bool,
+                                            denyMessage: String) -> String {
+        if request.isAskUserQuestion {
+            let answer = Self.oneLine(denyMessage)
+            return answer.isEmpty ? "Answered Claude's question"
+                                  : "Answered: \(answer.prefix(160))"
+        }
+        let target = request.input["command"]?.stringValue
+            ?? request.input["file_path"]?.stringValue
+        let what = target.map { "\(toolName) · \(Self.oneLine($0).prefix(80))" }
+            ?? toolName
+        return (allow ? "Allowed " : "Denied ") + what
+    }
+
+    nonisolated static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
     }
 
     /// Marks the plan a turn ended with (no ExitPlanMode call to answer).
@@ -166,6 +269,7 @@ public final class SessionCoordinator {
                 verdict: .allow(updatedInput: pending?.input ?? .null))
         }
         live[card.id]?.planApproval = nil
+        ActivityLog.record(.userNote, "Plan approved", on: card, in: context)
         if let effects = try? BoardEngine.apply(.approvePlan, to: card,
                                                 in: context) {
             await execute(effects, for: card)
@@ -181,6 +285,11 @@ public final class SessionCoordinator {
             requestID: approval.id,
             verdict: .deny(message: feedback))
         live[card.id]?.planApproval = nil
+        // Deny reasons reach the model as a tool result, never as an
+        // echoed user turn, so the request lives in the activity row.
+        ActivityLog.record(.userNote,
+                           "Requested plan changes: \(Self.oneLine(feedback).prefix(200))",
+                           on: card, in: context)
         try? BoardEngine.apply(.requestPlanChanges, to: card, in: context)
         try? context.save()
     }
@@ -188,6 +297,7 @@ public final class SessionCoordinator {
     public func interrupt(card: Card) async {
         guard let supervisor = await services.processManager
             .supervisor(for: card.id) else { return }
+        interruptsPending.insert(card.id)
         try? await supervisor.interrupt(cancelQueued: true)
         try? BoardEngine.apply(.interrupted, to: card, in: context)
         try? context.save()
@@ -261,13 +371,15 @@ public final class SessionCoordinator {
                                                          from: .now)],
                                         kind: .testing, role: .test)
             context.insert(sessionRef)
+            card.sessions.append(sessionRef)
             let run = TestRun(card: card, kind: .agentDriven,
                               command: project.testCommand,
                               agentSessionID: sessionID)
             context.insert(run)
+            card.testRuns.append(run)
+            ActivityLog.record(.agentStarted, "Agent test run started",
+                               on: card, in: context)
             try? context.save()
-            appendLive(card.id, .init(id: UUID().uuidString, kind: .notice,
-                                      text: "Agent test run started."))
             let cardID = card.id
             let runID = run.id
             Task { [weak self] in
@@ -334,9 +446,11 @@ public final class SessionCoordinator {
             run?.status = verdict.passed ? .passed : .failed
             run?.verdict = verdict.passed ? .pass : .fail
         }
-        appendLive(card.id, .init(
-            id: UUID().uuidString, kind: .notice,
-            text: "Agent tests: \(verdict.passed && !isError ? "passed" : "failed") — \(verdict.summary)"))
+        ActivityLog.record(
+            .testRunFinished,
+            (verdict.passed && !isError ? "Tests passed" : "Tests failed")
+                + (verdict.summary.isEmpty ? "" : " — \(verdict.summary)"),
+            on: card, in: context)
         if isError || !verdict.passed {
             onNotice?(.init(cardID: card.id, cardTitle: card.title,
                             kind: .testsFailed,
@@ -423,10 +537,14 @@ public final class SessionCoordinator {
                                      from: .now)],
                     kind: kind, role: .primary, isCurrent: true)
                 context.insert(sessionRef)
+                card.sessions.append(sessionRef)
             }
-            live[card.id] = LiveState()
-            appendLive(card.id, .init(id: UUID().uuidString, kind: .user,
-                                      text: initialMessage))
+            var fresh = LiveState()
+            fresh.historyGeneration = (live[card.id]?.historyGeneration ?? 0) + 1
+            live[card.id] = fresh
+            appendLive(card.id, Self.provisionalUserRow(initialMessage))
+            ActivityLog.record(.agentStarted, Self.startSummary(runKind),
+                               on: card, in: context)
             try? context.save()
             let cardID = card.id
             pumps[cardID] = Task { [weak self] in
@@ -473,6 +591,7 @@ public final class SessionCoordinator {
                 segments[segments.count - 1] = segment
                 session.segments = segments
             }
+            live[cardID, default: .init()].historyGeneration += 1
 
         case .permissionRequested(let requestID, let request):
             if request.isExitPlanMode {
@@ -480,7 +599,11 @@ public final class SessionCoordinator {
                     id: requestID, toolName: request.toolName,
                     displayInput: "", planText: request.planText,
                     suggestionsAvailable: false)
-                try? BoardEngine.apply(.planReady, to: card, in: context)
+                if (try? BoardEngine.apply(.planReady, to: card,
+                                           in: context)) != nil {
+                    ActivityLog.record(.agentFinished, "Plan ready for review",
+                                       on: card, in: context)
+                }
             } else {
                 live[cardID, default: .init()].pendingPermissions.append(
                     PendingPermission(
@@ -507,6 +630,8 @@ public final class SessionCoordinator {
                 card.lastAssistantSummary = String(text.prefix(200))
             }
             card.lastActivityAt = .now
+            live[cardID, default: .init()].historyGeneration += 1
+            live[cardID]?.streamingText = ""
             if runKind == .planning, !result.isError,
                live[cardID]?.planApproval == nil, card.column == .plan {
                 // The model presented its plan as text without calling
@@ -519,6 +644,39 @@ public final class SessionCoordinator {
                                       planText: result.resultText,
                                       suggestionsAvailable: false)
                 try? BoardEngine.apply(.planReady, to: card, in: context)
+                ActivityLog.record(.agentFinished, "Plan ready for review",
+                                   on: card, in: context)
+            }
+            if runKind == .interactiveChat, card.subState == .running {
+                // A chat turn never moves the card (resolution #4), but it
+                // must not leave it pinned as "running" with an idle agent.
+                card.subState = .idle
+            }
+            // A user interrupt already shows as the transcript's own
+            // interjection line; only genuine failures get a row.
+            let interrupted = card.subState == .interrupted
+                || (result.isError && interruptsPending.contains(cardID))
+            // Consumed by whichever result arrives first, however it ended. A
+            // Stop that raced the turn finishing cleanly used to leave the flag
+            // set for the life of the process — the supervisor outlives a turn,
+            // so the *next* genuine failure was then silently misread as that
+            // interrupt: no "Run stopped" row, no notification, and a card left
+            // in an error sub-state with nothing to explain it.
+            interruptsPending.remove(cardID)
+            let buildEnded = runKind == .autonomousRun
+                && card.column == .inProgress   // mirrors BoardEngine's guard
+            if buildEnded, !interrupted {
+                ActivityLog.record(
+                    result.isError ? .agentNeedsInput : .agentFinished,
+                    result.isError
+                        ? "Run stopped: \(Self.describe(result.subtype))"
+                        : "Run finished",
+                    on: card, in: context)
+            } else if result.isError, !interrupted, runKind != .testRun,
+                      runKind != .autonomousRun {
+                appendLive(cardID, .init(
+                    id: UUID().uuidString, kind: .notice,
+                    text: "Turn ended: \(Self.describe(result.subtype))"))
             }
             if let effects = try? BoardEngine.apply(
                 .runEnded(success: !result.isError,
@@ -526,14 +684,14 @@ public final class SessionCoordinator {
                 to: card, in: context) {
                 Task { await self.execute(effects, for: card) }
             }
-            if runKind == .autonomousRun {
+            if buildEnded, !interrupted {
                 onNotice?(.init(cardID: cardID, cardTitle: card.title,
                                 kind: result.isError ? .agentErrored
                                                      : .agentFinished,
                                 body: result.isError
                                     ? "The run failed — see the card."
                                     : "Finished — waiting in "
-                                      + card.column.rawValue + "."))
+                                      + card.column.displayName + "."))
             }
             try? context.save()
 
@@ -554,6 +712,9 @@ public final class SessionCoordinator {
                     .joined(separator: "\n")
             }
             live[cardID]?.activity = .ended(exit)
+            live[cardID]?.streamingText = ""
+            interruptsPending.remove(cardID)
+            live[cardID, default: .init()].historyGeneration += 1
             for session in card.sessions where session.exitReason == nil {
                 session.endedAt = .now
                 session.exitReason = .completed
@@ -565,24 +726,91 @@ public final class SessionCoordinator {
     private func renderLive(_ event: ClaudeEvent, cardID: UUID, card: Card) {
         switch event {
         case .assistant(let message):
+            // Subagent traffic is a sidechain in the transcript — it never
+            // shows in the primary thread (spec 01 §2.1).
+            guard message.parentToolUseID == nil else { return }
             if !message.text.isEmpty {
-                appendLive(cardID, .init(id: UUID().uuidString,
-                                         kind: .assistantText,
-                                         text: message.text))
+                appendLive(cardID, .init(
+                    id: message.raw["uuid"]?.stringValue ?? UUID().uuidString,
+                    kind: .assistantText, text: message.text))
                 live[cardID]?.streamingText = ""
             }
             for tool in message.toolUses {
                 appendLive(cardID, .init(
                     id: tool.id, kind: .toolUse(name: tool.name),
-                    text: Self.toolSummary(tool)))
+                    text: ToolDetail.summary(input: tool.input)))
                 card.lastAssistantSummary = "\(tool.name)…"
             }
+        case .user(let raw):
+            // `--replay-user-messages`: the CLI echoes the user's text back
+            // with its transcript uuid — adopt it so the row de-duplicates.
+            if var items = live[cardID]?.transcript {
+                Self.acknowledgeUserEcho(raw, in: &items)
+                live[cardID]?.transcript = items
+            }
         case .streamEvent(let raw):
+            guard raw["parent_tool_use_id"]?.stringValue == nil else { return }
             if let delta = raw["event"]?["delta"]?["text"]?.stringValue {
                 live[cardID, default: .init()].streamingText += delta
             }
         default:
             break
+        }
+    }
+
+    /// Matches an echoed user message (text blocks only — tool results are
+    /// user-role too) to the newest provisional row with the same text and
+    /// gives that row the CLI's uuid.
+    nonisolated static func acknowledgeUserEcho(_ raw: JSONValue,
+                                                in items: inout [LiveChatItem]) {
+        guard let uuid = raw["uuid"]?.stringValue else { return }
+        let message = raw["message"]
+        let text: String
+        if let plain = message?["content"]?.stringValue {
+            text = plain
+        } else {
+            let blocks = message?["content"]?.arrayValue ?? []
+            guard !blocks.contains(where: {
+                $0["type"]?.stringValue == "tool_result"
+            }) else { return }
+            text = blocks.compactMap { block -> String? in
+                block["type"]?.stringValue == "text"
+                    ? block["text"]?.stringValue : nil
+            }.joined()
+        }
+        guard !text.isEmpty else { return }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let index = items.lastIndex(where: {
+            $0.kind == .user && $0.isProvisional
+                && $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    == normalized
+        }) {
+            items[index].id = uuid
+        }
+    }
+
+    nonisolated static func provisionalUserRow(_ text: String) -> LiveChatItem {
+        .init(id: LiveChatItem.provisionalPrefix + UUID().uuidString,
+              kind: .user, text: text)
+    }
+
+    nonisolated static func startSummary(_ runKind: RunKind) -> String {
+        switch runKind {
+        case .planning: "Planning started"
+        case .autonomousRun: "Build started"
+        case .interactiveChat: "Chat started"
+        case .testRun: "Agent test run started"
+        }
+    }
+
+    /// Human wording for a `result` subtype (open set; keep the raw for
+    /// anything new).
+    nonisolated static func describe(_ subtype: String) -> String {
+        switch subtype {
+        case "error_max_budget_usd": "budget cap reached"
+        case "error_max_turns": "turn cap reached"
+        case "error_during_execution": "execution error"
+        default: subtype.replacingOccurrences(of: "_", with: " ")
         }
     }
 
@@ -703,9 +931,4 @@ public final class SessionCoordinator {
         return String(OutboundControl.encode(request.input).prefix(200))
     }
 
-    static func toolSummary(_ tool: ClaudeEvent.AssistantMessage.ToolUse) -> String {
-        if let command = tool.input["command"]?.stringValue { return command }
-        if let path = tool.input["file_path"]?.stringValue { return path }
-        return ""
-    }
 }

@@ -46,6 +46,34 @@ public enum TranscriptStore {
             }
     }
 
+    /// Reads at most the last `maxBytes` of a transcript, aligned to a line
+    /// boundary (a partial first line is dropped). Transcripts reach many MB
+    /// (spec 02 §4.5); the DAG walk only needs the tail, since the active
+    /// branch is the ancestry of the last line and stops at the first
+    /// parent outside the window.
+    public static func readTail(of url: URL,
+                                maxBytes: Int = 4 * 1024 * 1024) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let truncated = size > UInt64(maxBytes)
+        let start = truncated ? size - UInt64(maxBytes) : 0
+        try? handle.seek(toOffset: start)
+        guard var data = try? handle.readToEnd() else { return "" }
+        if truncated {
+            // The window starts at an arbitrary byte, possibly inside a
+            // multibyte character — drop the partial line BEFORE decoding.
+            guard let newline = data.firstIndex(of: UInt8(ascii: "\n")) else {
+                return ""
+            }
+            data = data[data.index(after: newline)...]
+        }
+        // Lossy decoding: a damaged byte must never cost the whole history.
+        return String(decoding: data, as: UTF8.self)
+    }
+
     /// The cwd-encoding is non-injective and version-dependent — NEVER
     /// derive-and-trust. Locate a session by globbing every project dir
     /// (resolution #5; M0 finding #9 confirms lines stay at the origin dir
@@ -80,6 +108,10 @@ public struct TranscriptItem: Sendable, Identifiable {
     public var timestamp: Date?
     public var isSidechain: Bool
     public var raw: JSONValue
+    /// The `tool_use` block id (`toolu_…`) for `.toolUse` items — the same
+    /// id the live stream carries, so a streamed tool row can be matched to
+    /// its transcript line once the file catches up.
+    public var toolUseID: String? = nil
 }
 
 /// Session-level metadata mined from a transcript (titles for tiles).
@@ -117,22 +149,24 @@ public enum TranscriptReader {
             let timestamp = value["timestamp"]?.stringValue
                 .flatMap { TranscriptDate.parse($0) }
 
-            var pieces: [(TranscriptItem.Role, String)] = []
+            var pieces: [(role: TranscriptItem.Role, text: String,
+                          toolUseID: String?)] = []
             if let text = message?["content"]?.stringValue {
-                pieces.append((type == "user" ? .user : .assistant, text))
+                pieces.append((type == "user" ? .user : .assistant, text, nil))
             } else {
                 for block in message?["content"]?.arrayValue ?? [] {
                     switch block["type"]?.stringValue {
                     case "text":
                         pieces.append((type == "user" ? .user : .assistant,
-                                       block["text"]?.stringValue ?? ""))
+                                       block["text"]?.stringValue ?? "", nil))
                     case "tool_use":
                         pieces.append((.toolUse(
                             name: block["name"]?.stringValue ?? "tool"),
-                            OutboundControl.encode(block["input"] ?? .null)))
+                            OutboundControl.encode(block["input"] ?? .null),
+                            block["id"]?.stringValue))
                     case "tool_result":
                         pieces.append((.toolResult,
-                                       block["content"]?.stringValue ?? ""))
+                                       block["content"]?.stringValue ?? "", nil))
                     default:
                         break
                     }
@@ -144,8 +178,9 @@ public enum TranscriptReader {
                 items.append((lineID: uuid, item: TranscriptItem(
                     id: index == 0 ? uuid : "\(uuid)#\(index)",
                     parentID: value["parentUuid"]?.stringValue,
-                    role: piece.0, text: piece.1, timestamp: timestamp,
-                    isSidechain: sidechain, raw: value)))
+                    role: piece.role, text: piece.text, timestamp: timestamp,
+                    isSidechain: sidechain, raw: value,
+                    toolUseID: piece.toolUseID)))
             }
         }
 

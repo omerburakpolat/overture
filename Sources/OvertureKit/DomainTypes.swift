@@ -9,6 +9,18 @@ import ClaudeKit
 /// lifecycle *drives* transitions but never fights the user.
 public enum Column: String, Codable, Sendable, CaseIterable, Equatable {
     case backlog, plan, inProgress, testing, review, done
+
+    /// The user-facing column name (activity rows, headers, VoiceOver).
+    public var displayName: String {
+        switch self {
+        case .backlog: "Backlog"
+        case .plan: "Plan"
+        case .inProgress: "In Progress"
+        case .testing: "Testing"
+        case .review: "Review"
+        case .done: "Done"
+        }
+    }
 }
 
 /// Runtime sub-state, orthogonal to the column (spec 04 §2.1, full set per
@@ -32,6 +44,25 @@ public enum CardSubState: String, Codable, Sendable, CaseIterable, Equatable {
     /// Sub-states that pin a card to its column (spec 04 §2.3: "any drag of a
     /// card whose agent is `running`" is rejected; agent test runs count).
     public var pinsCard: Bool { self == .running || self == .testingRunning }
+
+    /// Badge wording; the raw value stays the storage key.
+    public var displayName: String {
+        switch self {
+        case .idle: "Idle"
+        case .drafting: "Drafting"
+        case .planning: "Planning"
+        case .awaitingApproval: "Awaiting approval"
+        case .running: "Running"
+        case .queued: "Queued"
+        case .needsInput: "Needs input"
+        case .interrupted: "Interrupted"
+        case .testingRunning: "Testing"
+        case .manual: "Manual testing"
+        case .testsFailed: "Tests failed"
+        case .mergeConflict: "Merge conflict"
+        case .error: "Error"
+        }
+    }
 }
 
 /// Why a run exists (resolution #4). The schema stores card *subState*; the
@@ -72,6 +103,10 @@ public enum EventKind: String, Codable, Sendable, CaseIterable, Equatable {
     case cardCreated, columnChanged, agentStarted, agentFinished
     case agentNeedsInput, toolUse, testRunFinished, prOpened, prMerged
     case deploymentReady, userNote
+    /// Title, description or tags edited on the ticket.
+    case ticketEdited
+    /// Work landed on the default branch (local squash-merge or commit).
+    case merged
 }
 
 /// Test-run mechanics (spec 02 §3.1).

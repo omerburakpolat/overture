@@ -27,16 +27,7 @@ extension Column {
         }
     }
 
-    var title: String {
-        switch self {
-        case .backlog: "Backlog"
-        case .plan: "Plan"
-        case .inProgress: "In Progress"
-        case .testing: "Testing"
-        case .review: "Review"
-        case .done: "Done"
-        }
-    }
+    var title: String { displayName }
 }
 
 struct BoardView: View {
@@ -271,7 +262,7 @@ struct CardView: View {
         .elevation(.card)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(card.title), \(card.column.title), \(card.subState.rawValue)")
+            "\(card.title), \(card.column.title), \(card.subState.displayName)")
     }
 
     private var needsInput: Bool {

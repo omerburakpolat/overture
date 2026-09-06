@@ -15,22 +15,32 @@ public final class AppServices {
 
     /// Resolved claude executable — nil until onboarding reaches `.ready`.
     public var claudeURL: URL? {
+        if let claudeURLOverride { return claudeURLOverride }
         if case .ready(let readiness) = onboarding { return readiness.claudeURL }
         return nil
     }
+
+    /// Test seam: a stand-in `claude` (a script replaying recorded
+    /// stream-json shapes) so coordinator flows run offline. Never set by
+    /// the app.
+    public var claudeURLOverride: URL?
 
     public var authStatus: AuthStatus? {
         if case .ready(let readiness) = onboarding { return readiness.auth }
         return nil
     }
 
-    public init(inMemory: Bool = false) throws {
+    /// `journalURL` lets tests keep their orphan journal away from the real
+    /// one in Application Support (a test teardown must never clear rows the
+    /// running app owns).
+    public init(inMemory: Bool = false, journalURL: URL? = nil) throws {
         container = try OvertureStore.container(inMemory: inMemory)
         let supportDir = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Overture", isDirectory: true)
         processManager = ProcessManager(
-            journalURL: supportDir.appendingPathComponent("running-agents.json"))
+            journalURL: journalURL
+                ?? supportDir.appendingPathComponent("running-agents.json"))
     }
 
     public func runOnboarding() async {

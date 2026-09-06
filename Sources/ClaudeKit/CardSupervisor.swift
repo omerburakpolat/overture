@@ -72,6 +72,11 @@ public actor CardSupervisor {
     private var subprocess: Subprocess?
     private var eventContinuation: AsyncStream<SupervisorEvent>.Continuation?
     private(set) public var runKind: RunKind
+    /// The kind the in-flight turn was *sent* under. `runKind` is the kind the
+    /// NEXT turn will use, and `setPermissionMode` can change it while a turn
+    /// is still working — so a result must be reported against this, not
+    /// against whatever `runKind` happens to hold when the result arrives.
+    private var turnRunKind: RunKind
     private(set) public var activity: AgentActivity = .starting
     private var pendingPermissions: [String: PermissionRequest] = [:]
     /// Host-initiated control requests awaiting a CLI response.
@@ -84,6 +89,7 @@ public actor CardSupervisor {
     public init(context: SpawnContext) {
         self.context = context
         self.runKind = context.runKind
+        self.turnRunKind = context.runKind
     }
 
     public var sessionID: UUID { context.spec.sessionID }
@@ -130,6 +136,13 @@ public actor CardSupervisor {
     /// sends steer the current turn (CLI-native queueing).
     public func send(userText: String) async throws {
         try await write(OutboundControl.userText(userText))
+        // Freeze the kind this turn is reported as. A redirect that retargets
+        // the session mid-turn calls setPermissionMode while the previous turn
+        // is still working; without the freeze that turn's result came back
+        // labelled as the *new* run, and the coordinator treated it as the new
+        // run finishing — moving the card out of In Progress before any build
+        // had run.
+        turnRunKind = runKind
         setActivity(.working)
     }
 
@@ -199,7 +212,7 @@ public actor CardSupervisor {
         case .apiRetry(let retry):
             emit(.apiRetry(retry))
         case .result(let result):
-            emit(.turnCompleted(result, runKind: runKind))
+            emit(.turnCompleted(result, runKind: turnRunKind))
             setActivity(.idle)
         case .controlRequest(let request):
             if let permission = request.permissionRequest {
