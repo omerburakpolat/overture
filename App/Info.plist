@@ -5,6 +5,12 @@
 	<!-- Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE=YES);
 	     only custom keys live here. -->
 
+	<!-- Dock/Finder icon. App/ is a synchronized folder, so AppIcon.icns is
+	     copied into Resources automatically; regenerate it with
+	     scripts/make-icon.sh after editing Design/AppIcon.png. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+
 	<!-- Sparkle: the release workflow uploads appcast.xml to every GitHub
 	     release; /latest/download/ keeps the URL stable. -->
 	<key>SUFeedURL</key>

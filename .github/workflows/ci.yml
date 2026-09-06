@@ -5,13 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+# CI only reads the repo. The release workflow requests contents:write for
+# itself; nothing here should be able to write.
+permissions:
+  contents: read
+
 jobs:
   packages:
     name: Build & test packages
     # macOS 26 image required (SwiftUI/Liquid Glass APIs, Swift 6.2 toolchain).
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
       - name: Swift version
@@ -27,7 +32,7 @@ jobs:
     name: Build app
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
       - name: Build (unsigned)

@@ -1,0 +1,11 @@
+# Default owner for everything.
+*                       @omerburakpolat
+
+# Release and signing paths: a change here can alter what gets built, signed,
+# or shipped to every existing install, so they always want maintainer eyes.
+/.github/workflows/     @omerburakpolat
+/scripts/               @omerburakpolat
+/packaging/             @omerburakpolat
+/App/Info.plist         @omerburakpolat
+/App/Overture.entitlements @omerburakpolat
+/SECURITY.md            @omerburakpolat
