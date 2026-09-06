@@ -11,7 +11,7 @@ public actor AuthLogin {
         case finished(loggedIn: Bool)
     }
 
-    public enum Mode: String, Sendable {
+    public enum Mode: String, Sendable, CaseIterable {
         case subscription = "--claudeai"
         case console = "--console"
     }

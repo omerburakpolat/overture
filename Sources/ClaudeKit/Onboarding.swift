@@ -1,8 +1,13 @@
 import Foundation
 import ProcessCore
 
-/// First-run checks (resolution #12): binary → version → auth. Each step
-/// degrades to a specific, actionable failure — never a generic error.
+/// First-run checks (resolution #12): binary → version → auth.
+///
+/// Superseded by `ClaudeEnvironmentCheck`, which separates *which CLI*
+/// from *what credential*, tells a broken probe apart from a signed-out
+/// user, and reports which credential the app's own spawns will actually
+/// use. Kept only until the UI moves across, then deleted — do not add
+/// call sites.
 public enum OnboardingCheck {
     /// Minimum CLI version the protocol layer is tested against (M0 ran
     /// against 2.1.231). Newer versions warn, never block (spec 01 §7.1).
@@ -77,6 +82,10 @@ public enum OnboardingCheck {
     }
 }
 
+/// Superseded by `ClaudeAccount`, which decodes the full measured field
+/// set (including `apiKeySource` and `forcedLoginMethod`) and tolerates
+/// unknown values. Kept only until the UI moves across.
+///
 /// Decoded `claude auth status --json`. `subscriptionType` non-nil means
 /// subscription billing — cost UI shows tokens first, dollars as estimates
 /// (resolution #13).
