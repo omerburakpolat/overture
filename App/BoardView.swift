@@ -3,33 +3,6 @@ import UniformTypeIdentifiers
 import OvertureDesign
 import OvertureKit
 
-/// Column → design tokens (single hue ownership, spec 03 §3.4).
-extension Column {
-    var status: DS.StatusColor {
-        switch self {
-        case .backlog: DS.Status.neutral
-        case .plan: DS.Status.plan
-        case .inProgress: DS.Status.running
-        case .testing: DS.Status.testing
-        case .review: DS.Status.review
-        case .done: DS.Status.success
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .backlog: DS.Icon.backlog
-        case .plan: DS.Icon.plan
-        case .inProgress: DS.Icon.inProgress
-        case .testing: DS.Icon.testing
-        case .review: DS.Icon.review
-        case .done: DS.Icon.done
-        }
-    }
-
-    var title: String { displayName }
-}
-
 struct BoardView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.overtureTheme) private var theme
@@ -58,7 +31,7 @@ struct BoardView: View {
                 }
             }
             .padding(DS.Layout.boardMargin)
-            .animation(theme.reduceMotion ? .easeInOut(duration: 0.2)
+            .animation(theme.reduceMotion ? DS.Motion.fade
                                           : DS.Motion.Spring.flight,
                        value: layoutFingerprint)
         }
@@ -100,22 +73,7 @@ struct BoardView: View {
                              set: { store.mergeCandidate = $0 })) { card in
             MergeSheet(card: card, store: store)
         }
-        .overlay(alignment: .bottom) {
-            if let toast = store.toast {
-                Text(toast.message)
-                    .font(DS.TypeStyle.cardMeta)
-                    .foregroundStyle(DS.Color.Text.primary)
-                    .padding(.horizontal, DS.Space.s400)
-                    .padding(.vertical, DS.Space.s300)
-                    .glassOrOpaque(in: RoundedRectangle(
-                        cornerRadius: DS.Radius.panel))
-                    .elevation(.overlay)
-                    .padding(.bottom, DS.Space.s600)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .accessibilityAddTraits(.updatesFrequently)
-            }
-        }
-        .animation(DS.Motion.Spring.entrance, value: store.toast)
+        .toastOverlay(store.toast)
     }
 }
 
@@ -135,11 +93,12 @@ struct ColumnView: View {
                 LazyVStack(spacing: DS.Layout.cardGap) {
                     ForEach(cards) { card in
                         CardView(card: card,
-                                 overlaps: store.overlaps[card.id] ?? [])
-                            .matchedGeometryEffect(id: card.id, in: boardSpace)
-                            .onTapGesture { selectedCard = card }
-                            .draggable(card.id.uuidString)
-                            .contextMenu { cardMenu(card) }
+                                 overlaps: store.overlaps[card.id] ?? []) {
+                            selectedCard = card
+                        }
+                        .matchedGeometryEffect(id: card.id, in: boardSpace)
+                        .draggable(card.id.uuidString)
+                        .contextMenu { cardMenu(card) }
                     }
                 }
                 .padding(DS.Layout.columnInnerPadding)
@@ -151,8 +110,8 @@ struct ColumnView: View {
                     in: RoundedRectangle(cornerRadius: DS.Radius.panel))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.panel)
             .stroke(isDropTarget ? column.status.text : DS.Color.Border.subtle,
-                    style: StrokeStyle(lineWidth: 1,
-                                       dash: isDropTarget ? [6, 4] : [])))
+                    style: StrokeStyle(lineWidth: DS.Stroke.hairline,
+                                       dash: isDropTarget ? DS.Stroke.dash : [])))
         .dropDestination(for: String.self) { items, _ in
             guard let idString = items.first,
                   let cardID = UUID(uuidString: idString) else { return false }
@@ -169,15 +128,11 @@ struct ColumnView: View {
                 .foregroundStyle(column.status.text)
             Text(column.title.uppercased())
                 .font(DS.TypeStyle.columnHeader)
-                .kerning(0.8)
+                .kerning(DS.TypeStyle.columnHeaderKerning)
                 .foregroundStyle(column.status.text)
             Spacer()
-            Text("\(count)")
-                .font(DS.TypeStyle.badgeLabel)
-                .padding(.horizontal, DS.Space.s200)
-                .padding(.vertical, DS.Space.s050)
-                .background(column.status.tint, in: Capsule())
-                .foregroundStyle(column.status.text)
+            StatusBadge("\(count)", status: column.status)
+                .accessibilityLabel("\(count) cards")
         }
         .frame(height: DS.Layout.columnHeaderHeight)
         .padding(.horizontal, DS.Space.s300)
@@ -204,6 +159,9 @@ struct CardView: View {
     @Environment(AppState.self) private var appState
     let card: Card
     var overlaps: [String] = []
+    /// Click, Return or the VoiceOver default action.
+    var open: () -> Void = {}
+    @FocusState private var focused: Bool
 
     private var liveState: SessionCoordinator.LiveState? {
         appState.coordinator.live[card.id]
@@ -226,9 +184,10 @@ struct CardView: View {
 
             HStack(alignment: .top, spacing: DS.Space.s200) {
                 Circle()
-                    .fill(subStateColor.dot)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 4)
+                    .fill(card.subState.status(in: card.column).dot)
+                    .frame(width: DS.Layout.statusDot,
+                           height: DS.Layout.statusDot)
+                    .padding(.top, DS.Space.s100)
                 Text(card.title)
                     .font(DS.TypeStyle.cardTitle)
                     .foregroundStyle(DS.Color.Text.primary)
@@ -257,28 +216,34 @@ struct CardView: View {
         .background(DS.Color.Surface.raised,
                     in: RoundedRectangle(cornerRadius: DS.Radius.card))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.card)
-            .stroke(needsInput ? DS.Status.caution.text.opacity(0.6)
-                               : DS.Color.Border.subtle, lineWidth: 1))
+            .stroke(needsInput
+                    ? DS.Status.caution.text.opacity(DS.Opacity.cautionRing)
+                    : DS.Color.Border.subtle,
+                    lineWidth: DS.Stroke.hairline))
         .elevation(.card)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: open)
+        // Keyboard: Tab reaches the card and Return opens it, with the
+        // design system's ring in place of the default focus effect.
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .overtureFocusRing(focused, radius: DS.Radius.card)
+        .onKeyPress(.return) {
+            open()
+            return .handled
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(card.title), \(card.column.title), \(card.subState.displayName)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { open() }
     }
 
     private var needsInput: Bool {
         guard let liveState else { return false }
         return !liveState.pendingPermissions.isEmpty
             || liveState.planApproval != nil
-    }
-
-    private var subStateColor: DS.StatusColor {
-        switch card.subState {
-        case .running, .testingRunning: DS.Status.running
-        case .needsInput, .awaitingApproval: DS.Status.caution
-        case .error, .mergeConflict, .testsFailed: DS.Status.danger
-        case .queued, .interrupted: DS.Status.neutral
-        default: card.column.status
-        }
     }
 
     @ViewBuilder private var contextLine: some View {
@@ -336,33 +301,21 @@ struct CardView: View {
             }
             Spacer()
             if card.totalTokens > 0 || card.totalCostUSD > 0 {
-                Text(costLabel)
+                costText
                     .font(DS.TypeStyle.timestamp)
                     .foregroundStyle(DS.Color.Text.tertiary)
             }
         }
     }
 
-    private var costLabel: String {
-        // Tokens primary, dollars secondary-estimate (resolution #13).
-        if appState.services.authStatus?.isSubscription == false,
-           card.totalCostUSD > 0 {
-            return String(format: "$%.2f", card.totalCostUSD)
-        }
-        return String(format: "~$%.2f", card.totalCostUSD)
-    }
-}
-
-struct TagChip: View {
-    let tag: OvertureKit.Tag
-
-    var body: some View {
-        let color = DS.Tags.color(for: tag.colorToken)
-        Text(tag.name)
-            .font(DS.TypeStyle.badgeLabel)
-            .foregroundStyle(color.text)
-            .padding(.horizontal, DS.Space.s200)
-            .frame(height: 20)
-            .background(color.background, in: Capsule())
+    /// Tokens primary, dollars secondary-estimate (resolution #13): the
+    /// figure is exact only for API-key billing, else a "~" estimate.
+    private var costText: Text {
+        let amount = Text(card.totalCostUSD,
+                          format: .currency(code: "USD")
+                              .precision(.fractionLength(2)))
+        let exact = appState.services.authStatus?.isSubscription == false
+            && card.totalCostUSD > 0
+        return exact ? amount : Text("~") + amount
     }
 }

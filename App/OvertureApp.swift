@@ -26,7 +26,8 @@ struct OvertureApp: App {
                         systemImage: DS.Icon.error)
                 }
             }
-            .frame(minWidth: 960, minHeight: 620)
+            .frame(minWidth: DS.Layout.windowMinWidth,
+                   minHeight: DS.Layout.windowMinHeight)
             .background(DS.Color.Surface.canvas)
         }
         .commands {
@@ -45,7 +46,7 @@ struct OvertureApp: App {
             }
         }
 
-        MenuBarExtra("Overture", systemImage: "square.grid.3x3") {
+        MenuBarExtra("Overture", systemImage: DS.Icon.project) {
             if let appState {
                 MenuBarView().environment(appState)
             }
@@ -134,6 +135,7 @@ final class AppState {
 
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.overtureTheme) private var theme
     @State private var onboardingDone = false
 
     var body: some View {
@@ -163,15 +165,19 @@ struct RootView: View {
         .overlay {
             if appState.showCommandPalette {
                 ZStack(alignment: .top) {
-                    DS.Color.Text.primary.opacity(0.15)
+                    DS.Color.Text.primary.opacity(DS.Opacity.scrim)
                         .ignoresSafeArea()
                         .onTapGesture { appState.showCommandPalette = false }
+                        .accessibilityHidden(true)
                     CommandPalette()
                         .padding(.top, DS.Space.s1600)
                 }
                 .transition(.opacity)
             }
         }
+        // The toggle comes from a menu command, not a `withAnimation`
+        // block; without this the `.opacity` transition never runs.
+        .animation(DS.Motion.fade, value: appState.showCommandPalette)
     }
 
     private var needsOnboardingSheet: Bool {
@@ -232,7 +238,7 @@ struct OnboardingView: View {
             }
         }
         .padding(DS.Space.s600)
-        .frame(width: 480)
+        .frame(width: DS.Layout.Sheet.narrow)
         .background(DS.Color.Surface.overlay)
     }
 
@@ -278,7 +284,7 @@ struct SignInSection: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(height: 96)
+                .frame(height: DS.Layout.consoleHeight)
                 .padding(DS.Space.s200)
                 .background(DS.Color.Surface.sunken,
                             in: RoundedRectangle(cornerRadius: DS.Radius.sm))
@@ -294,6 +300,7 @@ struct SignInSection: View {
                         Task { await login?.cancel() }
                         running = false
                     }
+                    .keyboardShortcut(.cancelAction)
                 }
             } else {
                 HStack {
@@ -373,7 +380,8 @@ struct MenuBarView: View {
                                     state.activity == .needsInput
                                     ? DS.Status.caution.text
                                     : DS.Color.Accent.text)
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading,
+                                   spacing: DS.Space.s050) {
                                 Text(card.title)
                                     .font(DS.TypeStyle.cardMeta)
                                     .foregroundStyle(DS.Color.Text.primary)
@@ -391,7 +399,7 @@ struct MenuBarView: View {
             }
         }
         .padding(DS.Space.s400)
-        .frame(minWidth: 260)
+        .frame(minWidth: DS.Layout.menuMinWidth)
     }
 }
 
@@ -418,6 +426,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 280)
+        .frame(width: DS.Layout.settingsWindowSize.width,
+               height: DS.Layout.settingsWindowSize.height)
     }
 }

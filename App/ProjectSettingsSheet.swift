@@ -58,8 +58,10 @@ struct ProjectSettingsSheet: View {
             }
             .padding(DS.Space.s400)
         }
-        .frame(width: 520, height: 520)
+        .frame(width: DS.Layout.Sheet.medium, height: DS.Layout.Sheet.medium)
         .background(DS.Color.Surface.overlay)
+        // Settings apply as they change, so Esc means the same as Done.
+        .onExitCommand { dismiss() }
     }
 
     private var executionModeBinding: Binding<ExecutionMode> {

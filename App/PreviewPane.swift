@@ -26,6 +26,7 @@ struct PreviewTab: View {
             toolbar
             Divider()
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showConsole {
                 consoleStrip
             }
@@ -78,7 +79,9 @@ struct PreviewTab: View {
         HStack(spacing: DS.Space.s300) {
             if let handle {
                 Circle().fill(DS.Status.success.dot)
-                    .frame(width: 8, height: 8)
+                    .frame(width: DS.Layout.statusDot,
+                           height: DS.Layout.statusDot)
+                    .accessibilityLabel("Server running")
                 Text(handle.url.absoluteString)
                     .font(DS.TypeStyle.code)
                     .foregroundStyle(DS.Color.Text.secondary)
@@ -86,17 +89,19 @@ struct PreviewTab: View {
                 Button {
                     reloadToken += 1
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Image(systemName: DS.Icon.reload)
                 }
                 .buttonStyle(.plain)
                 .help("Reload")
+                .accessibilityLabel("Reload")
                 Button {
                     NSWorkspace.shared.open(handle.url)
                 } label: {
-                    Image(systemName: "safari")
+                    Image(systemName: DS.Icon.openInBrowser)
                 }
                 .buttonStyle(.plain)
                 .help("Open in browser")
+                .accessibilityLabel("Open in browser")
                 Spacer()
                 Button("Stop") {
                     Task {
@@ -104,6 +109,7 @@ struct PreviewTab: View {
                         self.handle = nil
                     }
                 }
+                .help("Stop the dev server")
             } else {
                 Text(card.worktreePath != nil
                      ? "Serving from this card's worktree"
@@ -120,6 +126,8 @@ struct PreviewTab: View {
             }
             .buttonStyle(.plain)
             .help("Server console")
+            .accessibilityLabel("Server console")
+            .accessibilityAddTraits(showConsole ? .isSelected : [])
         }
         .padding(DS.Space.s300)
         .background(DS.Color.Surface.raised)
@@ -134,7 +142,7 @@ struct PreviewTab: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(DS.Space.s200)
         }
-        .frame(height: 120)
+        .frame(height: DS.Layout.consoleHeight)
         .background(DS.Color.Surface.canvas)
         .task {
             while showConsole, !Task.isCancelled {
