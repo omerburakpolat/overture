@@ -16,8 +16,12 @@ Package.resolved.lock
 # Overture local state (never commit runtime artifacts)
 .overture/
 
-# Secrets — never commit signing or update keys
+# Secrets — never commit signing, notarization or update keys
 *.p12
+*.p8
+AuthKey_*
+*.cer
+*.certSigningRequest
 *.provisionprofile
 sparkle_private_key*
 
