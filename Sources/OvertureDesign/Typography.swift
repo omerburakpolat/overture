@@ -10,6 +10,8 @@ public extension DS {
         public static let tileSummary = Font.callout
         /// Uppercase, tracked +0.06em, colored by the column's status hue.
         public static let columnHeader = Font.subheadline.weight(.semibold)
+        /// Tracking for uppercase headers (§4.2 "+0.06em" at 11pt).
+        public static let columnHeaderKerning: CGFloat = 0.8
         public static let cardTitle = Font.body.weight(.medium)
         public static let cardMeta = Font.subheadline
         /// Relaxed leading for transcript prose is applied via
@@ -26,6 +28,9 @@ public extension DS {
         public static let emptyStateTitle = Font.title3.weight(.semibold)
         public static let emptyStateBody = Font.callout
         public static let kbd = Font.system(.caption, design: .monospaced)
+        /// Glyph-only buttons that anchor a row (send, add): the 20pt tier
+        /// of §9's symbol sizes.
+        public static let iconLarge = Font.title2
     }
 
     /// SF Symbols mapping (§9, with resolution #23's picks). One symbol per
@@ -66,5 +71,17 @@ public extension DS {
         public static let preview = "macwindow.on.rectangle"
         public static let arrowUp = "arrow.up"
         public static let arrowDown = "arrow.down"
+        // Controls and rows.
+        public static let close = "xmark.circle.fill"
+        public static let stop = "stop.circle.fill"
+        public static let send = "arrow.up.circle.fill"
+        public static let info = "info.circle"
+        public static let edit = "pencil"
+        public static let selected = "checkmark"
+        public static let reload = "arrow.clockwise"
+        public static let openInBrowser = "safari"
+        public static let activity = "clock.arrow.circlepath"
+        /// The app itself (menu bar extra, project rows in ⌘K).
+        public static let project = "square.grid.3x3"
     }
 }

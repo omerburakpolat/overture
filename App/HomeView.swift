@@ -14,12 +14,11 @@ struct HomeView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(
                 .adaptive(minimum: DS.Layout.tileMinWidth,
-                          maximum: DS.Layout.tileIdealWidth + 60),
+                          maximum: DS.Layout.tileMaxWidth),
                 spacing: DS.Layout.tileGridGap)],
                 spacing: DS.Layout.tileGridGap) {
                 ForEach(appState.projectsStore.projects) { project in
-                    ProjectTile(project: project)
-                        .onTapGesture { open(project) }
+                    ProjectTile(project: project) { open(project) }
                         .contextMenu {
                             Button("Remove from Overture", role: .destructive) {
                                 appState.projectsStore.remove(project)
@@ -39,7 +38,11 @@ struct HomeView: View {
                 Label("Add Project", systemImage: DS.Icon.newTicket)
             }
         }
-        .alert("Not a git repository", isPresented: .constant(pendingInit != nil)) {
+        // A real binding: the alert can be dismissed by the system (Esc,
+        // clicking away) as well as by its buttons.
+        .alert("Not a git repository", isPresented: Binding(
+            get: { pendingInit != nil },
+            set: { if !$0 { pendingInit = nil } })) {
             Button("Run git init") {
                 if let url = pendingInit {
                     Task {
@@ -88,39 +91,49 @@ struct HomeView: View {
     }
 }
 
+/// A project tile is a button (spec 03 §7 states: hover, pressed, focused),
+/// so it opens from the keyboard and VoiceOver as well as by click.
 struct ProjectTile: View {
     @Environment(AppState.self) private var appState
     let project: Project
+    let open: () -> Void
     @State private var hovering = false
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s200) {
-            Text(project.name)
-                .font(DS.TypeStyle.tileTitle)
-                .foregroundStyle(DS.Color.Text.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: DS.Space.s200) {
+                Text(project.name)
+                    .font(DS.TypeStyle.tileTitle)
+                    .foregroundStyle(DS.Color.Text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
-            middle
+                middle
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            footer
+                footer
+            }
+            .padding(DS.Space.s400)
+            .frame(height: DS.Layout.tileHeight, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.Color.Surface.raised,
+                        in: RoundedRectangle(cornerRadius: DS.Radius.tile))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.tile)
+                .stroke(DS.Color.Border.subtle, lineWidth: DS.Stroke.hairline))
+            .elevation(hovering ? .hover : .card)
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.tile))
         }
-        .padding(DS.Space.s400)
-        .frame(height: DS.Layout.tileHeight, alignment: .top)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.Color.Surface.raised,
-                    in: RoundedRectangle(cornerRadius: DS.Radius.tile))
-        .overlay(RoundedRectangle(cornerRadius: DS.Radius.tile)
-            .stroke(DS.Color.Border.subtle, lineWidth: 1))
-        .elevation(hovering ? .hover : .card)
+        .buttonStyle(.plain)
+        .focused($focused)
+        .focusEffectDisabled()
+        .overtureFocusRing(focused, radius: DS.Radius.tile)
         .onHover { hovering = $0 }
         .animation(DS.Motion.Spring.snap, value: hovering)
         .task(id: project.id) {
             await appState.projectsStore.refreshGitStatus(for: project)
         }
-        .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
     }
 
@@ -185,16 +198,22 @@ struct ProjectTile: View {
                 .foregroundStyle(DS.Color.Text.secondary)
                 if !status.isClean {
                     Circle().fill(DS.Status.caution.dot)
-                        .frame(width: 6, height: 6)
+                        .frame(width: DS.Layout.indicatorDot,
+                               height: DS.Layout.indicatorDot)
                         .accessibilityLabel("uncommitted changes")
                 }
+                // Ahead/behind: the §9.3 glyph + count, not a text arrow.
                 if status.ahead > 0 {
-                    Text("↑\(status.ahead)").font(DS.TypeStyle.timestamp)
+                    Label("\(status.ahead)", systemImage: DS.Icon.arrowUp)
+                        .font(DS.TypeStyle.timestamp)
                         .foregroundStyle(DS.Color.Text.tertiary)
+                        .accessibilityLabel("\(status.ahead) ahead")
                 }
                 if status.behind > 0 {
-                    Text("↓\(status.behind)").font(DS.TypeStyle.timestamp)
+                    Label("\(status.behind)", systemImage: DS.Icon.arrowDown)
+                        .font(DS.TypeStyle.timestamp)
                         .foregroundStyle(DS.Color.Text.tertiary)
+                        .accessibilityLabel("\(status.behind) behind")
                 }
             }
             Spacer()
@@ -202,12 +221,7 @@ struct ProjectTile: View {
                 $0.archivedAt == nil && $0.column != .done
             }.count
             if open > 0 {
-                Text("\(open)")
-                    .font(DS.TypeStyle.badgeLabel)
-                    .padding(.horizontal, DS.Space.s200)
-                    .padding(.vertical, DS.Space.s050)
-                    .background(DS.Status.neutral.tint, in: Capsule())
-                    .foregroundStyle(DS.Status.neutral.text)
+                StatusBadge("\(open)", status: DS.Status.neutral)
                     .accessibilityLabel("\(open) open cards")
             }
         }
@@ -221,12 +235,13 @@ struct ProjectTile: View {
 
 struct AddProjectTile: View {
     let action: () -> Void
+    @FocusState private var focused: Bool
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: DS.Space.s200) {
                 Image(systemName: DS.Icon.newTicket)
-                    .font(.title2)
+                    .font(DS.TypeStyle.iconLarge)
                 Text("Add Project")
                     .font(DS.TypeStyle.cardTitle)
             }
@@ -237,9 +252,14 @@ struct AddProjectTile: View {
                         in: RoundedRectangle(cornerRadius: DS.Radius.tile))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.tile)
                 .stroke(DS.Color.Border.strong,
-                        style: StrokeStyle(lineWidth: 1, dash: [6, 4])))
+                        style: StrokeStyle(lineWidth: DS.Stroke.hairline,
+                                           dash: DS.Stroke.dash)))
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.tile))
         }
         .buttonStyle(.plain)
+        .focused($focused)
+        .focusEffectDisabled()
+        .overtureFocusRing(focused, radius: DS.Radius.tile)
     }
 }
 
@@ -266,13 +286,14 @@ struct TrustGateSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { decision(false) }
+                    .keyboardShortcut(.cancelAction)
                 Button("Trust and Open") { decision(true) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.Space.s600)
-        .frame(width: 480)
+        .frame(width: DS.Layout.Sheet.narrow)
         .background(DS.Color.Surface.overlay)
     }
 }

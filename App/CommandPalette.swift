@@ -48,7 +48,7 @@ struct CommandPalette: View {
                     }
             }
             .padding(.horizontal, DS.Space.s400)
-            .frame(height: 44)
+            .frame(height: DS.Layout.commandFieldHeight)
             .glassOrOpaque(in: Capsule())
 
             if !results.isEmpty {
@@ -61,7 +61,7 @@ struct CommandPalette: View {
                             HStack(spacing: DS.Space.s300) {
                                 Image(systemName: result.icon)
                                     .foregroundStyle(DS.Color.Text.secondary)
-                                    .frame(width: 18)
+                                    .frame(width: DS.Layout.iconColumnWidth)
                                 Text(result.title)
                                     .font(DS.TypeStyle.cardTitle)
                                     .foregroundStyle(DS.Color.Text.primary)
@@ -79,6 +79,8 @@ struct CommandPalette: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(
+                            index == selection ? .isSelected : [])
                     }
                 }
                 .padding(.vertical, DS.Space.s100)
@@ -87,7 +89,7 @@ struct CommandPalette: View {
                 .elevation(.overlay)
             }
         }
-        .frame(width: 480)
+        .frame(width: DS.Layout.commandFieldWidth)
         .onAppear { focused = true }
         .onChange(of: query) { selection = 0 }
     }
@@ -110,7 +112,7 @@ struct CommandPalette: View {
                     || $0.name.lowercased().contains(needle) }
                 .prefix(4)
                 .map { Result(id: $0.id, kind: .project($0), title: $0.name,
-                              subtitle: "Project", icon: "square.grid.3x3") }
+                              subtitle: "Project", icon: DS.Icon.project) }
         }
         if scope != "@" {
             let cards = appState.projectsStore.projects

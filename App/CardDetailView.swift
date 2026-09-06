@@ -14,8 +14,6 @@ struct CardDetailView: View {
     let card: Card
     let store: BoardStore
     @State private var tab: Tab = .chat
-    @State private var titleDraft = ""
-    @FocusState private var titleFocused: Bool
 
     enum Tab: String, CaseIterable {
         case chat = "Chat"
@@ -29,85 +27,71 @@ struct CardDetailView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            switch tab {
-            case .chat: ThreadTab(card: card, store: store)
-            case .diff: DiffTab(card: card)
-            case .preview: PreviewTab(card: card, store: store)
-            case .tests: TestsTab(card: card)
-            case .activity: ActivityTab(card: card)
-            }
+            tabContent
         }
-        .frame(minWidth: 640, idealWidth: 760, minHeight: 520,
-               idealHeight: 640)
+        // Pinned to the top: a tab whose content is not greedy (an empty
+        // state) must not float the whole stack to the sheet's centre.
+        .frame(minWidth: DS.Layout.Sheet.detailMin.width,
+               idealWidth: DS.Layout.Sheet.detailIdeal.width,
+               minHeight: DS.Layout.Sheet.detailMin.height,
+               idealHeight: DS.Layout.Sheet.detailIdeal.height,
+               alignment: .top)
         .background(DS.Color.Surface.canvas)
-        .overlay(alignment: .bottom) {
-            if let toast = store.toast {
-                Text(toast.message)
-                    .font(DS.TypeStyle.cardMeta)
-                    .foregroundStyle(DS.Color.Text.primary)
-                    .padding(.horizontal, DS.Space.s400)
-                    .padding(.vertical, DS.Space.s300)
-                    .glassOrOpaque(in: RoundedRectangle(
-                        cornerRadius: DS.Radius.panel))
-                    .elevation(.overlay)
-                    .padding(.bottom, DS.Space.s1200)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(DS.Motion.Spring.entrance, value: store.toast)
-        .onAppear { titleDraft = card.title }
-        .onChange(of: card.title) { titleDraft = card.title }
-        .onChange(of: titleFocused) { if !titleFocused { commitTitle() } }
-        // Focus loss is not delivered to a sheet being torn down, so every
-        // exit commits explicitly; onDisappear is the backstop.
-        .onDisappear { commitTitle() }
+        .toastOverlay(store.toast)
     }
 
     private var liveState: SessionCoordinator.LiveState? {
         appState.coordinator.live[card.id]
     }
 
+    @ViewBuilder private var tabContent: some View {
+        switch tab {
+        case .chat: ThreadTab(card: card, store: store)
+        case .diff: DiffTab(card: card)
+        case .preview: PreviewTab(card: card, store: store)
+        case .tests: TestsTab(card: card)
+        case .activity: ActivityTab(card: card)
+        }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: DS.Space.s200) {
             HStack(spacing: DS.Space.s200) {
-                Label(card.column.title, systemImage: card.column.icon)
-                    .font(DS.TypeStyle.badgeLabel)
-                    .foregroundStyle(card.column.status.text)
-                    .padding(.horizontal, DS.Space.s200)
-                    .padding(.vertical, DS.Space.s050)
-                    .background(card.column.status.tint, in: Capsule())
+                StatusBadge(card.column.title, icon: card.column.icon,
+                            status: card.column.status)
                 if card.subState != .idle {
-                    Text(card.subState.displayName)
-                        .font(DS.TypeStyle.badgeLabel)
-                        .foregroundStyle(DS.Color.Text.tertiary)
+                    StatusBadge(card.subState.displayName,
+                                icon: card.subState.icon(in: card.column),
+                                status: card.subState.status(in: card.column))
+                        .help(subStateHelp)
                 }
                 Spacer()
                 actions
-                Button {
-                    commitTitle()
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(DS.Color.Text.tertiary)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
+                // Role-typed close (macOS 26): the system supplies the glyph,
+                // the "Close" accessibility label and a full hit target. The
+                // title commits itself when the sheet is torn down.
+                Button(role: .close) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Close")
             }
-            TextField("Title", text: $titleDraft)
-                .textFieldStyle(.plain)
-                .font(DS.TypeStyle.screenTitle)
-                .foregroundStyle(DS.Color.Text.primary)
-                .focused($titleFocused)
-                .onSubmit { titleFocused = false }
-                .accessibilityLabel("Ticket title")
-            Picker("", selection: $tab) {
+            EditableTitle(title: card.title, onCommit: commitTitle)
+            Picker("Section", selection: $tab) {
                 ForEach(Tab.allCases, id: \.self) { Text($0.rawValue) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 380)
+            .fixedSize()
         }
         .padding(DS.Space.s400)
+    }
+
+    /// The badge tooltip carries the error text; the Chat tab shows it in
+    /// full underneath the thread.
+    private var subStateHelp: String {
+        if card.subState == .error, let error = liveState?.lastError {
+            return error
+        }
+        return card.subState.displayName
     }
 
     /// State-contextual actions (spec 04 §3.3): the same transitions a drag
@@ -129,7 +113,6 @@ struct CardDetailView: View {
             .buttonStyle(.borderedProminent)
         case .review, .testing:
             Button("Approve → Done…") {
-                commitTitle()
                 dismiss()
                 store.requestApproval(card)
             }
@@ -147,16 +130,13 @@ struct CardDetailView: View {
         }
     }
 
-    private func commitTitle() {
-        let trimmed = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != card.title else {
-            titleDraft = card.title
-            return
-        }
-        if !store.updateTicket(card, title: trimmed, details: card.details,
-                               tags: card.tags) {
-            titleDraft = card.title
-        }
+    private func commitTitle(_ draft: String) {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != card.title else { return }
+        // A rejected title (over the limit) leaves `card.title` untouched,
+        // which is what the label shows again; the store explains via toast.
+        _ = store.updateTicket(card, title: trimmed, details: card.details,
+                               tags: card.tags)
     }
 }
 
@@ -164,6 +144,7 @@ struct CardDetailView: View {
 
 struct ThreadTab: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.overtureTheme) private var theme
     let card: Card
     let store: BoardStore
     @State private var draft = ""
@@ -172,6 +153,10 @@ struct ThreadTab: View {
     /// Reloads can overlap (turn end and process end bump within a frame);
     /// a slower, older read must not overwrite a newer one.
     @State private var latestLoad = 0
+    /// True while the reader is at (or within a short distance of) the newest
+    /// entry. Only then does new content pull the scroll position along —
+    /// someone reading history is never yanked to the bottom.
+    @State private var stuckToBottom = true
 
     private var liveState: SessionCoordinator.LiveState? {
         appState.coordinator.live[card.id]
@@ -186,6 +171,10 @@ struct ThreadTab: View {
         card.testRuns.map {
             "\($0.id.uuidString)#\($0.statusRaw)#\($0.summary.count)"
         }.joined()
+    }
+
+    private var draftIsBlank: Bool {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func refreshEntries() {
@@ -211,23 +200,29 @@ struct ThreadTab: View {
                             MarkdownText(streaming)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Color.clear.frame(height: 1).id("bottom")
+                        Color.clear.frame(height: 0).id("bottom")
                     }
                     .padding(DS.Space.s400)
                     .frame(maxWidth: DS.Layout.transcriptMeasure)
                     .frame(maxWidth: .infinity)
                 }
-                .onChange(of: entries.count) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.visibleRect.maxY
+                        >= geometry.contentSize.height - DS.Space.s1200
+                } action: { _, nearBottom in
+                    stuckToBottom = nearBottom
                 }
-                .onChange(of: liveState?.streamingText) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
+                .onChange(of: entries.count) { follow(with: proxy) }
+                .onChange(of: liveState?.streamingText) { follow(with: proxy) }
             }
             .background(DS.Color.Surface.sunken)
 
             if let approval = liveState?.planApproval {
                 PlanApprovalBanner(card: card, approval: approval)
+                    .transition(theme.reduceMotion
+                        ? .opacity
+                        : .move(edge: .bottom).combined(with: .opacity))
             }
             ForEach(liveState?.pendingPermissions ?? []) { pending in
                 PermissionBanner(card: card, pending: pending)
@@ -239,6 +234,7 @@ struct ThreadTab: View {
                 Label(error, systemImage: DS.Icon.error)
                     .font(DS.TypeStyle.cardMeta)
                     .foregroundStyle(DS.Status.danger.text)
+                    .textSelection(.enabled)
                     .padding(DS.Space.s300)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.Status.danger.tint)
@@ -246,6 +242,9 @@ struct ThreadTab: View {
 
             composer
         }
+        .animation(theme.reduceMotion ? DS.Motion.fade
+                                      : DS.Motion.Spring.entrance,
+                   value: liveState?.planApproval?.id)
         .task(id: card.id) {
             refreshEntries()
             await reloadHistory()
@@ -257,6 +256,11 @@ struct ThreadTab: View {
         .onChange(of: eventCount) { refreshEntries() }
         .onChange(of: testRunFingerprint) { refreshEntries() }
         .onChange(of: liveState?.transcript) { refreshEntries() }
+    }
+
+    private func follow(with proxy: ScrollViewProxy) {
+        guard stuckToBottom else { return }
+        proxy.scrollTo("bottom", anchor: .bottom)
     }
 
     private var conflictBanner: some View {
@@ -286,33 +290,41 @@ struct ThreadTab: View {
     }
 
     private var composer: some View {
-        HStack(spacing: DS.Space.s300) {
-            TextField(placeholder, text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(DS.TypeStyle.chatBody)
-                .lineLimit(1...6)
-                .onSubmit(send)
-            if liveState?.activity == .working {
-                Button {
-                    Task { await appState.coordinator.interrupt(card: card) }
-                } label: {
-                    Image(systemName: "stop.circle.fill")
-                        .foregroundStyle(DS.Status.danger.text)
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: DS.Space.s300) {
+                TextField(placeholder, text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(DS.TypeStyle.chatBody)
+                    .lineLimit(1...6)
+                    .onSubmit(send)
+                    .accessibilityLabel("Comment")
+                if liveState?.activity == .working {
+                    Button {
+                        Task { await appState.coordinator.interrupt(card: card) }
+                    } label: {
+                        Image(systemName: DS.Icon.stop)
+                            .font(DS.TypeStyle.iconLarge)
+                            .foregroundStyle(DS.Status.danger.text)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Interrupt the agent")
+                    .accessibilityLabel("Interrupt the agent")
+                }
+                Button(action: send) {
+                    Image(systemName: DS.Icon.send)
+                        .font(DS.TypeStyle.iconLarge)
+                        .foregroundStyle(draftIsBlank
+                            ? AnyShapeStyle(DS.Color.Text.tertiary)
+                            : AnyShapeStyle(DS.Color.Accent.fill))
                 }
                 .buttonStyle(.plain)
-                .help("Interrupt the agent")
+                .disabled(draftIsBlank)
+                .help("Send (Return)")
+                .accessibilityLabel("Send comment")
             }
-            Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(draft.isEmpty
-                        ? AnyShapeStyle(DS.Color.Text.tertiary)
-                        : AnyShapeStyle(DS.Color.Accent.fill))
-            }
-            .buttonStyle(.plain)
-            .disabled(draft.isEmpty)
+            .padding(DS.Space.s300)
         }
-        .padding(DS.Space.s300)
         .background(DS.Color.Surface.raised)
     }
 
@@ -365,8 +377,9 @@ struct TicketBody: View {
             HStack {
                 Text("DESCRIPTION")
                     .font(DS.TypeStyle.columnHeader)
-                    .kerning(0.8)
+                    .kerning(DS.TypeStyle.columnHeaderKerning)
                     .foregroundStyle(DS.Color.Text.tertiary)
+                    .accessibilityLabel("Description")
                 Spacer()
                 Button(editing ? "Cancel" : "Edit") {
                     if editing {
@@ -380,23 +393,32 @@ struct TicketBody: View {
                 .buttonStyle(.plain)
                 .font(DS.TypeStyle.cardMeta)
                 .foregroundStyle(DS.Color.Accent.text)
+                .help(editing ? "Discard the changes"
+                              : "Edit the description and tags")
             }
             if editing {
                 TextEditor(text: $detailsDraft)
                     .font(DS.TypeStyle.chatBody)
-                    .frame(minHeight: 120)
+                    // The editor otherwise paints its own opaque background
+                    // over the sunken well.
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: DS.Layout.editorMinHeight)
                     .padding(DS.Space.s100)
                     .background(DS.Color.Surface.sunken,
                                 in: RoundedRectangle(cornerRadius: DS.Radius.sm))
-                tagPicker
+                    .accessibilityLabel("Description")
+                TagPicker(tags: store.project.tags, selection: $selectedTags)
                 HStack {
                     Spacer()
+                    // Return saves. Note the banners' Approve / Allow buttons
+                    // also claim `.defaultAction`; while both are on screen
+                    // the first responder decides which one Return reaches.
                     Button("Save") {
                         let tags = store.project.tags.filter {
                             selectedTags.contains($0.id)
                         }
-                        store.updateTicket(card, title: card.title,
-                                           details: detailsDraft, tags: tags)
+                        _ = store.updateTicket(card, title: card.title,
+                                               details: detailsDraft, tags: tags)
                         editing = false
                     }
                     .buttonStyle(.borderedProminent)
@@ -415,6 +437,8 @@ struct TicketBody: View {
                     HStack(spacing: DS.Space.s100) {
                         ForEach(card.tags) { TagChip(tag: $0) }
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Tags")
                 }
             }
         }
@@ -423,25 +447,7 @@ struct TicketBody: View {
         .background(DS.Color.Surface.raised,
                     in: RoundedRectangle(cornerRadius: DS.Radius.panel))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.panel)
-            .stroke(DS.Color.Border.subtle, lineWidth: 1))
-    }
-
-    private var tagPicker: some View {
-        HStack(spacing: DS.Space.s100) {
-            ForEach(store.project.tags) { tag in
-                Button {
-                    if selectedTags.contains(tag.id) {
-                        selectedTags.remove(tag.id)
-                    } else {
-                        selectedTags.insert(tag.id)
-                    }
-                } label: {
-                    TagChip(tag: tag)
-                        .opacity(selectedTags.contains(tag.id) ? 1 : 0.45)
-                }
-                .buttonStyle(.plain)
-            }
-        }
+            .stroke(DS.Color.Border.subtle, lineWidth: DS.Stroke.hairline))
     }
 }
 
@@ -460,8 +466,13 @@ struct ThreadRow: View {
                 .padding(DS.Space.s300)
                 .background(DS.Color.Accent.tint,
                             in: RoundedRectangle(cornerRadius: DS.Radius.card))
-                .opacity(entry.isPending ? 0.7 : 1)
+                .opacity(entry.isPending ? DS.Opacity.pending : 1)
+                // Bubbles hug their text up to 75% of the measure (spec 03 §7).
+                .frame(maxWidth: DS.Layout.userBubbleMaxWidth,
+                       alignment: .trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityLabel(entry.isPending ? "You (sending)" : "You")
+                .accessibilityValue(text)
         case .assistant(let text):
             VStack(alignment: .leading, spacing: DS.Space.s200) {
                 HStack(spacing: DS.Space.s200) {
@@ -476,6 +487,7 @@ struct ThreadRow: View {
                             .foregroundStyle(DS.Color.Text.tertiary)
                     }
                 }
+                .accessibilityElement(children: .combine)
                 MarkdownText(text)
                 Divider().overlay(DS.Color.Border.subtle)
             }
@@ -504,7 +516,7 @@ struct ThreadRow: View {
                 .background(DS.Color.Surface.raised,
                             in: RoundedRectangle(cornerRadius: DS.Radius.sm))
         case .notice(let text):
-            Label(text, systemImage: "info.circle")
+            Label(text, systemImage: DS.Icon.info)
                 .font(DS.TypeStyle.cardMeta)
                 .foregroundStyle(DS.Color.Text.tertiary)
         }
@@ -522,7 +534,7 @@ struct ThreadRow: View {
         case .prOpened: DS.Icon.pullRequest
         case .prMerged, .merged: DS.Icon.commit
         case .deploymentReady: DS.Icon.deployReady
-        case .userNote, .ticketEdited: "pencil"
+        case .userNote, .ticketEdited: DS.Icon.edit
         }
     }
 
@@ -582,6 +594,7 @@ struct ToolRow: View {
         .frame(height: DS.Layout.menuRowHeight)
         .background(DS.Color.Surface.raised,
                     in: RoundedRectangle(cornerRadius: DS.Radius.sm))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -610,7 +623,7 @@ struct PlanApprovalBanner: View {
                     MarkdownText(plan)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 240)
+                .frame(maxHeight: DS.Layout.planPreviewMaxHeight)
                 .padding(DS.Space.s300)
                 .background(DS.Color.Surface.raised,
                             in: RoundedRectangle(cornerRadius: DS.Radius.sm))
@@ -682,6 +695,8 @@ struct PermissionBanner: View {
                         answer(allow: true, always: true)
                     }
                 }
+                // Spec wants Esc = Deny; the sheet's Close already owns
+                // `.cancelAction`, so Deny stays click-only for now.
                 Button("Deny…") {
                     if denying { answer(allow: false) } else { denying = true }
                 }
@@ -690,7 +705,7 @@ struct PermissionBanner: View {
         .padding(DS.Space.s400)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.Color.Surface.overlay)  // never glass (spec 03 §1.2)
-        .overlay(Rectangle().frame(height: 2)
+        .overlay(Rectangle().frame(height: DS.Stroke.accentBar)
             .foregroundStyle(DS.Status.caution.text), alignment: .top)
     }
 
@@ -716,7 +731,11 @@ struct DiffTab: View {
             if files.isEmpty {
                 ContentUnavailableView(
                     loadFailed ? "No diff available" : "No changes yet",
-                    systemImage: DS.Icon.diff)
+                    systemImage: DS.Icon.diff,
+                    description: Text(loadFailed
+                        ? "Git could not produce a diff for this card's branch."
+                        : "Changes the agent makes on this card show up here."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: DS.Space.s400) {
@@ -761,8 +780,10 @@ struct DiffFileView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(file.path).font(DS.TypeStyle.code)
+                Text(file.path)
                     .foregroundStyle(DS.Color.Text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer()
                 Text("+\(file.additions)")
                     .foregroundStyle(DS.Status.success.text)
@@ -772,6 +793,7 @@ struct DiffFileView: View {
             .font(DS.TypeStyle.code)
             .padding(DS.Space.s300)
             .background(DS.Color.Surface.raised)
+            .accessibilityElement(children: .combine)
 
             ForEach(Array(file.hunks.enumerated()), id: \.offset) { _, hunk in
                 ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
@@ -781,7 +803,7 @@ struct DiffFileView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.sm))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.sm)
-            .stroke(DS.Color.Border.subtle, lineWidth: 1))
+            .stroke(DS.Color.Border.subtle, lineWidth: DS.Stroke.hairline))
     }
 }
 
@@ -794,14 +816,14 @@ struct DiffLineView: View {
                  ?? line.oldNumber.map(String.init) ?? "")
                 .font(DS.TypeStyle.diffLineNumber)
                 .foregroundStyle(DS.Color.Text.tertiary)
-                .frame(width: 40, alignment: .trailing)
+                .frame(width: DS.Layout.diffGutterWidth, alignment: .trailing)
             Text(line.text)
                 .font(DS.TypeStyle.code)
                 .foregroundStyle(DS.Color.Text.primary)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, DS.Space.s200)
-        .padding(.vertical, 1)
+        .padding(.vertical, DS.Space.s050)
         .background(background)
     }
 
@@ -830,7 +852,9 @@ struct TestsTab: View {
                          + "acceptance criteria without fixing anything.")
                 } actions: {
                     runButton
+                        .buttonStyle(.borderedProminent)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(card.testRuns.sorted { $0.startedAt > $1.startedAt }
                         .map(TestRunSummary.init)) { run in
@@ -852,6 +876,9 @@ struct TestsTab: View {
             Task { await appState.coordinator.startAgentTests(for: card) }
         }
         .disabled(card.subState.pinsCard)
+        .help(card.subState.pinsCard
+              ? "Wait for the current run to finish."
+              : "Verify the work against the ticket's acceptance criteria.")
     }
 }
 
@@ -871,6 +898,7 @@ struct TestRunRow: View {
                     .font(DS.TypeStyle.timestamp)
                     .foregroundStyle(DS.Color.Text.tertiary)
             }
+            .accessibilityElement(children: .combine)
             if !run.summary.isEmpty {
                 Text(run.summary)
                     .font(DS.TypeStyle.cardMeta)
@@ -891,6 +919,7 @@ struct TestRunRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(DS.Status.danger.tint, in: RoundedRectangle(
                     cornerRadius: DS.Radius.xs))
+                .accessibilityElement(children: .combine)
             }
         }
         .padding(.vertical, DS.Space.s100)
@@ -929,19 +958,33 @@ struct ActivityTab: View {
     let card: Card
 
     var body: some View {
-        List(card.events.sorted { $0.at > $1.at }, id: \.id) { event in
-            HStack(spacing: DS.Space.s300) {
-                Text(event.at, style: .time)
-                    .font(DS.TypeStyle.timestamp)
-                    .foregroundStyle(DS.Color.Text.tertiary)
-                Image(systemName: ThreadRow.icon(for: event.kind))
-                    .foregroundStyle(ThreadRow.tint(for: event.kind))
-                Text(event.summary)
-                    .font(DS.TypeStyle.cardMeta)
-                    .foregroundStyle(DS.Color.Text.primary)
+        Group {
+            if card.events.isEmpty {
+                ContentUnavailableView(
+                    "No activity yet", systemImage: DS.Icon.activity,
+                    description: Text("Ticket edits, column moves, agent runs "
+                                      + "and test verdicts are recorded here."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(card.events.sorted { $0.at > $1.at }, id: \.id) { event in
+                    HStack(spacing: DS.Space.s300) {
+                        // Day + time: a card's history spans days, and a
+                        // bare clock time would be ambiguous.
+                        Text(event.at,
+                             format: .dateTime.day().month().hour().minute())
+                            .font(DS.TypeStyle.timestamp)
+                            .foregroundStyle(DS.Color.Text.tertiary)
+                        Image(systemName: ThreadRow.icon(for: event.kind))
+                            .foregroundStyle(ThreadRow.tint(for: event.kind))
+                        Text(event.summary)
+                            .font(DS.TypeStyle.cardMeta)
+                            .foregroundStyle(DS.Color.Text.primary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                .scrollContentBackground(.hidden)
             }
         }
-        .scrollContentBackground(.hidden)
         .background(DS.Color.Surface.sunken)
     }
 }
@@ -957,6 +1000,11 @@ struct TicketComposer: View {
     @State private var selectedTags: Set<UUID> = []
     @State private var draftPrompt = ""
     @State private var drafting = false
+    @State private var draftFailed = false
+
+    private var titleIsBlank: Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s400) {
@@ -967,68 +1015,74 @@ struct TicketComposer: View {
                 .font(DS.TypeStyle.cardTitle)
             TextEditor(text: $details)
                 .font(DS.TypeStyle.chatBody)
-                .frame(minHeight: 140)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: DS.Layout.editorMinHeight)
                 .padding(DS.Space.s100)
                 .background(DS.Color.Surface.sunken,
                             in: RoundedRectangle(cornerRadius: DS.Radius.sm))
+                .accessibilityLabel("Description")
 
-            HStack(spacing: DS.Space.s100) {
-                ForEach(store.project.tags) { tag in
-                    Button {
-                        if selectedTags.contains(tag.id) {
-                            selectedTags.remove(tag.id)
-                        } else {
-                            selectedTags.insert(tag.id)
-                        }
-                    } label: {
-                        TagChip(tag: tag)
-                            .opacity(selectedTags.contains(tag.id) ? 1 : 0.45)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+            TagPicker(tags: store.project.tags, selection: $selectedTags)
 
             Divider()
 
-            HStack(spacing: DS.Space.s200) {
-                Image(systemName: DS.Icon.sparkles)
-                    .foregroundStyle(DS.Color.Accent.text)
-                TextField("Draft with Claude: describe the problem roughly…",
-                          text: $draftPrompt)
-                    .textFieldStyle(.plain)
-                    .onSubmit(draftWithClaude)
-                if drafting { ProgressView().controlSize(.small) }
+            VStack(alignment: .leading, spacing: DS.Space.s200) {
+                HStack(spacing: DS.Space.s200) {
+                    Image(systemName: DS.Icon.sparkles)
+                        .foregroundStyle(DS.Color.Accent.text)
+                        .accessibilityHidden(true)
+                    TextField("Draft with Claude: describe the problem roughly…",
+                              text: $draftPrompt)
+                        .textFieldStyle(.plain)
+                        .onSubmit(draftWithClaude)
+                        .disabled(drafting)
+                        .accessibilityLabel("Draft with Claude")
+                    if drafting { ProgressView().controlSize(.small) }
+                }
+                .padding(DS.Space.s300)
+                .background(DS.Color.Accent.tint,
+                            in: RoundedRectangle(cornerRadius: DS.Radius.md))
+                if draftFailed {
+                    Label("Claude couldn't draft this ticket. Check that the "
+                          + "CLI is signed in, then try again.",
+                          systemImage: DS.Icon.error)
+                        .font(DS.TypeStyle.cardMeta)
+                        .foregroundStyle(DS.Status.caution.text)
+                }
             }
-            .padding(DS.Space.s300)
-            .background(DS.Color.Accent.tint,
-                        in: RoundedRectangle(cornerRadius: DS.Radius.md))
 
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Create") {
                     let tags = store.project.tags.filter {
                         selectedTags.contains($0.id)
                     }
-                    store.createCard(title: title, details: details, tags: tags)
+                    _ = store.createCard(title: title, details: details,
+                                         tags: tags)
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(title.isEmpty)
+                .disabled(titleIsBlank)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.Space.s600)
-        .frame(width: 560)
+        .frame(width: DS.Layout.Sheet.wide)
         .background(DS.Color.Surface.overlay)
     }
 
     /// The stateless one-shot recipe (resolution #19) — grounded in the
     /// project's code via read-only tools; never becomes the card's session.
     private func draftWithClaude() {
-        guard !draftPrompt.isEmpty, !drafting,
-              let claudeURL = appState.services.claudeURL else { return }
+        guard !draftPrompt.isEmpty, !drafting else { return }
+        guard let claudeURL = appState.services.claudeURL else {
+            draftFailed = true
+            return
+        }
         drafting = true
+        draftFailed = false
         let prompt = draftPrompt
         let projectPath = store.project.path
         Task {
@@ -1040,6 +1094,8 @@ struct TicketComposer: View {
             if let draft {
                 title = draft.title
                 details = draft.body
+            } else {
+                draftFailed = true
             }
         }
     }

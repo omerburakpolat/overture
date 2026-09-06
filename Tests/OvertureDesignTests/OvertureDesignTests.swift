@@ -126,3 +126,62 @@ private func contrast(_ a: UInt32, _ b: UInt32) -> Double {
         #expect(resolved(primary, dark: true) == 0xECECF1)
     }
 }
+
+/// Layout, stroke and opacity tokens are public API consumed by every
+/// screen; a change here must be an intentional design decision, not a
+/// side effect of a refactor.
+@Suite struct LayoutTokenSnapshotTests {
+    @Test func windowAndSheetSizes() {
+        #expect(DS.Layout.windowMinWidth == 960)
+        #expect(DS.Layout.windowMinHeight == 620)
+        #expect(DS.Layout.Sheet.narrow == 480)
+        #expect(DS.Layout.Sheet.medium == 520)
+        #expect(DS.Layout.Sheet.wide == 560)
+        #expect(DS.Layout.Sheet.detailMin == CGSize(width: 640, height: 520))
+        #expect(DS.Layout.Sheet.detailIdeal == CGSize(width: 760, height: 640))
+        #expect(DS.Layout.settingsWindowSize == CGSize(width: 480, height: 280))
+        // Spec §5.4: command field 480×44; §7: toast max width 360.
+        #expect(DS.Layout.commandFieldWidth == 480)
+        #expect(DS.Layout.commandFieldHeight == 44)
+        #expect(DS.Layout.toastMaxWidth == 360)
+    }
+
+    @Test func componentMetrics() {
+        #expect(DS.Layout.statusDot == 8)
+        #expect(DS.Layout.indicatorDot == 6)
+        #expect(DS.Layout.chipHeight == 20)
+        #expect(DS.Layout.iconColumnWidth == 20)
+        #expect(DS.Layout.diffGutterWidth == 40)
+        #expect(DS.Layout.editorMinHeight == 120)
+        #expect(DS.Layout.planPreviewMaxHeight == 240)
+        #expect(DS.Layout.consoleHeight == 120)
+        #expect(DS.Layout.menuMinWidth == 260)
+        #expect(DS.Layout.tileMaxWidth == 380)
+        // Spec §7: user bubbles at most 75% of the transcript measure.
+        #expect(DS.Layout.userBubbleMaxWidth == DS.Layout.transcriptMeasure * 0.75)
+        #expect(DS.Layout.userBubbleMaxWidth == 480)
+        // Every small hit target still clears the §5.4 minimum.
+        #expect(DS.Layout.minimumHitTarget <= DS.Layout.menuRowHeight)
+        #expect(DS.Layout.chipHeight < DS.Layout.minimumHitTarget)
+    }
+
+    @Test func strokesAndOpacities() {
+        #expect(DS.Stroke.hairline == 1)
+        #expect(DS.Stroke.accentBar == 2)
+        #expect(DS.Stroke.dash == [6, 4])
+        #expect(DS.Opacity.pending == 0.7)
+        #expect(DS.Opacity.deselected == 0.45)
+        #expect(DS.Opacity.cautionRing == 0.6)
+        // Spec §1.2: content behind the command field is dimmed 25%.
+        #expect(DS.Opacity.scrim == 0.25)
+    }
+
+    @Test func typographyAndIconAdditions() {
+        #expect(DS.TypeStyle.columnHeaderKerning == 0.8)
+        // One symbol per concept (§9): the new names must stay distinct.
+        let names = [DS.Icon.close, DS.Icon.stop, DS.Icon.send, DS.Icon.info,
+                     DS.Icon.edit, DS.Icon.selected, DS.Icon.reload,
+                     DS.Icon.openInBrowser, DS.Icon.activity, DS.Icon.project]
+        #expect(Set(names).count == names.count)
+    }
+}

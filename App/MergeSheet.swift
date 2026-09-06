@@ -54,6 +54,7 @@ struct MergeSheet: View {
                 Label(errorMessage, systemImage: DS.Icon.error)
                     .font(DS.TypeStyle.cardMeta)
                     .foregroundStyle(DS.Status.danger.text)
+                    .textSelection(.enabled)
                     .padding(DS.Space.s300)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.Status.danger.tint, in: RoundedRectangle(
@@ -61,43 +62,26 @@ struct MergeSheet: View {
             }
 
             HStack {
-                if working { ProgressView().controlSize(.small) }
+                if working {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Working")
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                     .disabled(working)
             }
         }
         .padding(DS.Space.s600)
-        .frame(width: 480)
+        .frame(width: DS.Layout.Sheet.narrow)
         .background(DS.Color.Surface.overlay)
     }
 
     private func option(title: String, detail: String, icon: String,
                         choice: BoardStore.ApproveChoice) -> some View {
-        Button {
+        MergeOption(title: title, detail: detail, icon: icon) {
             perform(choice)
-        } label: {
-            HStack(alignment: .top, spacing: DS.Space.s300) {
-                Image(systemName: icon)
-                    .foregroundStyle(DS.Color.Accent.text)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: DS.Space.s050) {
-                    Text(title).font(DS.TypeStyle.cardTitle)
-                        .foregroundStyle(DS.Color.Text.primary)
-                    Text(detail).font(DS.TypeStyle.cardMeta)
-                        .foregroundStyle(DS.Color.Text.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
-            .padding(DS.Space.s300)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DS.Color.Surface.raised, in: RoundedRectangle(
-                cornerRadius: DS.Radius.md))
-            .overlay(RoundedRectangle(cornerRadius: DS.Radius.md)
-                .stroke(DS.Color.Border.subtle, lineWidth: 1))
         }
-        .buttonStyle(.plain)
         .disabled(working)
     }
 
@@ -113,5 +97,52 @@ struct MergeSheet: View {
                 dismiss()
             }
         }
+    }
+}
+
+/// One strategy row: a raised card that answers hover, focus and keyboard
+/// like the control it is (spec 03 §7 interactive states).
+private struct MergeOption: View {
+    let title: String
+    let detail: String
+    let icon: String
+    let action: () -> Void
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: DS.Space.s300) {
+                Image(systemName: icon)
+                    .foregroundStyle(DS.Color.Accent.text)
+                    .frame(width: DS.Layout.iconColumnWidth)
+                VStack(alignment: .leading, spacing: DS.Space.s050) {
+                    Text(title).font(DS.TypeStyle.cardTitle)
+                        .foregroundStyle(DS.Color.Text.primary)
+                    Text(detail).font(DS.TypeStyle.cardMeta)
+                        .foregroundStyle(DS.Color.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+            .padding(DS.Space.s300)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.Color.Surface.raised, in: RoundedRectangle(
+                cornerRadius: DS.Radius.md))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.md)
+                .fill(hovering ? DS.Color.Accent.tint : .clear))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.md)
+                .stroke(DS.Color.Border.subtle, lineWidth: DS.Stroke.hairline))
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.md))
+        }
+        .buttonStyle(.plain)
+        .focused($focused)
+        .focusEffectDisabled()
+        .overtureFocusRing(focused, radius: DS.Radius.md)
+        .onHover { hovering = $0 }
+        .animation(DS.Motion.fade, value: hovering)
+        .help(detail)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
     }
 }

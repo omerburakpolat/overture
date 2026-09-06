@@ -68,6 +68,10 @@ public extension DS {
         public static let pulse: Duration = .milliseconds(2400)
         public static let shimmer: Duration = .milliseconds(1600)
 
+        /// The Reduce Motion substitution for any positional spring (§6.4):
+        /// a plain cross-fade at `duration.base`.
+        public static let fade = Animation.easeInOut(duration: 0.2)
+
         public enum Spring {
             public static let snap = Animation.spring(response: 0.30,
                                                       dampingFraction: 0.90)
@@ -101,6 +105,67 @@ public extension DS {
         public static let transcriptMeasure: CGFloat = 640
         public static let minimumHitTarget: CGFloat = 24
         public static let menuRowHeight: CGFloat = 28
+
+        // Windows and sheets.
+        public static let windowMinWidth: CGFloat = 960
+        public static let windowMinHeight: CGFloat = 620
+        public static let settingsWindowSize = CGSize(width: 480, height: 280)
+
+        /// Sheet widths (§5.2 `radius.tile` surfaces): three fixed widths for
+        /// the dialog-style sheets, and the resizable card detail sheet.
+        public enum Sheet {
+            public static let narrow: CGFloat = 480
+            public static let medium: CGFloat = 520
+            public static let wide: CGFloat = 560
+            public static let detailMin = CGSize(width: 640, height: 520)
+            public static let detailIdeal = CGSize(width: 760, height: 640)
+        }
+
+        /// ⌘K command field, 480×44 centered (§5.4).
+        public static let commandFieldWidth: CGFloat = 480
+        public static let commandFieldHeight: CGFloat = 44
+        /// Toast max width (§7).
+        public static let toastMaxWidth: CGFloat = 360
+
+        // Small fixed parts of components (§7).
+        /// 8pt status dot on cards and server indicators; 6pt for the tile's
+        /// dirty-tree dot.
+        public static let statusDot: CGFloat = 8
+        public static let indicatorDot: CGFloat = 6
+        /// Tag chips and status badges are 20pt tall.
+        public static let chipHeight: CGFloat = 20
+        /// Fixed-width leading symbol column in option rows and lists.
+        public static let iconColumnWidth: CGFloat = 20
+        public static let diffGutterWidth: CGFloat = 40
+        public static let editorMinHeight: CGFloat = 120
+        /// Inline plan preview / expanded tool output cap before inner scroll.
+        public static let planPreviewMaxHeight: CGFloat = 240
+        public static let consoleHeight: CGFloat = 120
+        public static let menuMinWidth: CGFloat = 260
+        public static let tileMaxWidth: CGFloat = 380
+        /// User bubbles sit at ≤75% of the transcript measure (§7).
+        public static let userBubbleMaxWidth: CGFloat = transcriptMeasure * 0.75
+    }
+
+    /// Stroke widths and patterns (§5.3, §7).
+    enum Stroke {
+        public static let hairline: CGFloat = 1
+        /// The 2pt accent bar on the permission banner.
+        public static let accentBar: CGFloat = 2
+        /// Drop-target and "add" outlines.
+        public static let dash: [CGFloat] = [6, 4]
+    }
+
+    /// Opacity steps for states that dim rather than recolor (§7).
+    enum Opacity {
+        /// A provisional row (sent, not yet echoed by the CLI).
+        public static let pending: Double = 0.7
+        /// An unselected chip in a picker.
+        public static let deselected: Double = 0.45
+        /// The caution ring around a card that needs input (§7 "at 60%").
+        public static let cautionRing: Double = 0.6
+        /// Content dimmed behind the ⌘K command field (§1.2 "dimmed 25%").
+        public static let scrim: Double = 0.25
     }
 }
 
