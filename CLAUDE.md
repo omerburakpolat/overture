@@ -139,6 +139,20 @@ someone else, notarization. `scripts/release.sh` exists for that and is not
 part of the edit-run loop. Xcode's ⌘R is fine too — it handles the quit and
 relaunch itself.
 
+### Cleaning up
+
+```bash
+scripts/clean.sh --dry-run   # show what would go
+scripts/clean.sh             # delete it
+```
+
+Removes `.build*`, `build/` and `dist/` — all gitignored and regenerable.
+Build output reaches a couple of gigabytes quickly, mostly DerivedData and
+the per-agent SwiftPM scratch dirs. It refuses to run while Overture is
+running from inside the repo, because `run-local.sh` launches out of `build/`
+and deleting a live app bundle leaves the process running with its resources
+pulled out from under it.
+
 ### Tests
 
 `swift test` runs 85 unit tests with no network and no `claude` needed. Live
