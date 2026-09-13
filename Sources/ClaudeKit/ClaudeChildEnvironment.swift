@@ -47,6 +47,24 @@ public enum ClaudeChildEnvironment {
         "CLAUDE_PID",
         "CLAUDE_AGENT_SDK_VERSION",
         "CLAUDE_EFFORT",
+        // Set by a Claude Code *host* — the desktop app, the Agent SDK — for
+        // the CLI it embeds. None is documented as a user setting (checked
+        // against code.claude.com/docs/en/env-vars, 2026-09-13). Inherited,
+        // they tell an agent a host is refreshing its login or managing its
+        // provider when none is. Documented user settings that such a host
+        // also happens to set (CLAUDE_CODE_DISABLE_CRON,
+        // CLAUDE_CODE_DISABLE_TERMINAL_TITLE, CLAUDE_CODE_OAUTH_SCOPES) are
+        // deliberately kept: stripping them would undo a user's choice.
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+        "CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH",
+        "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+        "CLAUDE_CODE_DESKTOP_APP_VERSION",
+        "CLAUDE_CODE_EAGER_FLUSH",
+        "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+        "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL",
+        "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+        "CLAUDE_CODE_REPORT_FINDINGS",
+        "CLAUDE_PREVIEW_CLASSIFIER_FLOOR",
     ]
 
     /// Variables that decide which credential a child authenticates with,
@@ -56,13 +74,16 @@ public enum ClaudeChildEnvironment {
     /// Referenced by name only: Overture never reads, copies, or logs their
     /// values. Used to explain precedence to the user, never to act on it.
     public static let credentialRelevant: [EnvVarName] = [
-        // 1. Cloud provider selection.
+        // 1. Cloud provider selection (Mantle is Bedrock's variant).
         "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_MANTLE",
         "CLAUDE_CODE_USE_VERTEX",
         "CLAUDE_CODE_USE_FOUNDRY",
-        // 2–3. Bearer token, then API key.
+        // 2–3. Bearer token, then API key — plus Foundry's own pair.
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_FOUNDRY_API_KEY",
+        "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
         // 5. Long-lived OAuth token from `claude setup-token`, and the refresh
         //    token `claude auth login` can exchange instead of a browser.
         "CLAUDE_CODE_OAUTH_TOKEN",

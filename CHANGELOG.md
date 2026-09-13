@@ -21,6 +21,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A first-run window explaining what Overture needs, with a specific fix for
   each failure and a way past it. It re-checks when you switch back to the app,
   so installing the CLI or signing in elsewhere resolves it without a click.
+- Overture checks that the `claude` it runs is signed by Anthropic, shows who
+  signed it in Settings, and warns — without blocking — when it isn't.
+- When your login shell sets provider variables Overture can't see (Bedrock,
+  Vertex, Foundry, a base URL), the first-run window and Settings show how to
+  move the non-secret ones into `~/.claude/settings.json`, where Terminal and
+  Overture both read them, with a snippet to copy. Keys and tokens are never
+  suggested for that file, and Overture never writes it.
 
 ### Fixed
 
@@ -51,6 +58,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   login that isn't being used.
 - Long-lived `claude setup-token` tokens were shown with exact dollar costs.
   They bill a subscription, so costs are now estimates.
+- Switching back to Overture ran `claude` twice every time. Once everything
+  works it now re-checks every ten minutes — immediately while something is
+  broken — and every agent start is still checked first.
+- When Overture was launched from inside a Claude Code desktop session,
+  variables that host sets for its own CLI (auth refresh, provider routing)
+  leaked into agents. They are now stripped; documented user settings are
+  kept.
 
 ## [0.1.0] — 2026-09-06
 

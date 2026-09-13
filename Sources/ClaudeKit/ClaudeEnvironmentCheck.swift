@@ -40,6 +40,9 @@ public struct ClaudeEnvironmentCheck: Sendable {
         public var capture:
             @Sendable (URL, [String], [String: String]) async -> CaptureResult
         public var now: @Sendable () -> Date
+        /// Who signed the binary. Defaults to "not checked" so test probe sets
+        /// never run `codesign`.
+        public var signature: @Sendable (URL) async -> CodeSignature.Status
 
         public init(
             candidatePaths: @escaping @Sendable () -> [String],
@@ -51,7 +54,9 @@ public struct ClaudeEnvironmentCheck: Sendable {
                 -> ShellEnvironmentProbe.Finding,
             capture: @escaping @Sendable (URL, [String], [String: String]) async
                 -> CaptureResult,
-            now: @escaping @Sendable () -> Date
+            now: @escaping @Sendable () -> Date,
+            signature: @escaping @Sendable (URL) async -> CodeSignature.Status
+                = { _ in .unverified("not checked") }
         ) {
             self.candidatePaths = candidatePaths
             self.overridePath = overridePath
@@ -61,6 +66,7 @@ public struct ClaudeEnvironmentCheck: Sendable {
             self.shellDivergence = shellDivergence
             self.capture = capture
             self.now = now
+            self.signature = signature
         }
 
         public static let live = Probes(
@@ -76,7 +82,11 @@ public struct ClaudeEnvironmentCheck: Sendable {
             capture: { executable, arguments, environment in
                 await liveCapture(executable, arguments, environment)
             },
-            now: { Date() })
+            now: { Date() },
+            signature: { url in
+                await CodeSignatureCache.shared.status(
+                    for: url, verify: { await CodeSignature.verify($0) })
+            })
     }
 
     public var probes: Probes
@@ -84,7 +94,7 @@ public struct ClaudeEnvironmentCheck: Sendable {
     public init(probes: Probes = .live) { self.probes = probes }
 
     public func run() async -> ClaudeReadiness {
-        let cli = await locateCLI()
+        var cli = await locateCLI()
         let environment = probes.childEnvironment()
 
         guard let executable = cli.executableURL, cli.isUsable else {
@@ -93,6 +103,9 @@ public struct ClaudeEnvironmentCheck: Sendable {
                 checkedAt: probes.now())
         }
 
+        // ~0.7 s the first time for a given binary and cached after, so it
+        // runs alongside the auth probes rather than in front of them.
+        async let signature = probes.signature(executable)
         let auth = await probeAuth(executable: executable,
                                    environment: environment)
         let storedLogin = await storedLoginBeneathOverrides(
@@ -103,6 +116,7 @@ public struct ClaudeEnvironmentCheck: Sendable {
                                          storedLogin: storedLogin)
         }
         let divergence = await probes.shellDivergence(environment)
+        cli.signature = await signature
         return ClaudeReadiness(cli: cli, auth: auth,
                                effectiveCredential: credential,
                                shellDivergence: divergence,

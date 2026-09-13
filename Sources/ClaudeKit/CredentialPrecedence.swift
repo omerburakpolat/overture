@@ -95,8 +95,8 @@ public enum CredentialPrecedence {
         // 1. A cloud provider outranks everything, and the CLI reports it.
         if !account.apiProvider.isFirstParty {
             let switches: [EnvVarName] = [
-                "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-                "CLAUDE_CODE_USE_FOUNDRY",
+                "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_MANTLE",
+                "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
             ]
             return Resolution(
                 source: .cloudProvider(account.apiProvider),

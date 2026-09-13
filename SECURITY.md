@@ -30,6 +30,12 @@ shape is deliberate, and it has consequences worth stating plainly.
   incompatible with launching arbitrary user toolchains in arbitrary
   directories. See [`App/Overture.entitlements`](App/Overture.entitlements).
 - Ships signed with a Developer ID certificate and notarized by Apple.
+- Checks that the `claude` it runs is signed by Anthropic (Developer ID team
+  `Q6L2SF6YDW`) and warns in Settings and the first-run window when it isn't.
+  It never refuses to run one — a developer build is legitimate — and the
+  check shells out to `codesign`; it does not touch the Keychain. This catches
+  a wrong or stale binary on your PATH. It is not a defence against someone
+  who can already write to your home folder.
 
 **What Overture does not do**
 

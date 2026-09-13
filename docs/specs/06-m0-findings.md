@@ -164,3 +164,19 @@ item 5, on 2026-09-13 — read item 12 before trusting any request-time result.
     (Q6L2SF6YDW)`.** `codesign --verify --strict -R='anchor apple generic and
     certificate leaf[subject.OU] = "Q6L2SF6YDW"'` exits 0 for it, 3 for a
     binary signed by another team, and 1 for an unsigned one, in ~0.7 s.
+19. **Each provider's setup page names the variables it needs** (fetched
+    2026-09-13): Bedrock `CLAUDE_CODE_USE_BEDROCK` + `AWS_REGION` (optionally
+    `AWS_PROFILE`), with a Mantle variant switched on by
+    `CLAUDE_CODE_USE_MANTLE`; Vertex `CLAUDE_CODE_USE_VERTEX` +
+    `CLOUD_ML_REGION` + `ANTHROPIC_VERTEX_PROJECT_ID`; Foundry
+    `CLAUDE_CODE_USE_FOUNDRY` + `ANTHROPIC_FOUNDRY_RESOURCE` (or `_BASE_URL`),
+    whose secrets are `ANTHROPIC_FOUNDRY_API_KEY` / `_AUTH_TOKEN`.
+20. **A Claude Code host sets undocumented variables for the CLI it embeds**:
+    `CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH`, `_SDK_HAS_OAUTH_REFRESH`,
+    `_DESKTOP_APP_VERSION`, `_EAGER_FLUSH`, `_EMIT_TOOL_USE_SUMMARIES`,
+    `_ENABLE_ASK_USER_QUESTION_TOOL`, `_ENABLE_SDK_FILE_CHECKPOINTING`,
+    `_REPORT_FINDINGS`, `CLAUDE_PREVIEW_CLASSIFIER_FLOOR`, plus the documented
+    host marker `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`. It also sets
+    `CLAUDE_CODE_DISABLE_CRON`, `_DISABLE_TERMINAL_TITLE` and `_OAUTH_SCOPES`,
+    which *are* documented user settings. With the messaging socket stripped,
+    the refresh variables alone do not keep an expired login working.

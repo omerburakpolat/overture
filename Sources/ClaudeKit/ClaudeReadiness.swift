@@ -30,10 +30,15 @@ public struct CLIStatus: Sendable, Equatable {
     public var installation: Installation
     /// Nil only when the binary is missing.
     public var version: Version?
+    /// Whether the binary is signed by Anthropic. Nil until checked; a
+    /// warning in the UI, never a reason to refuse to run.
+    public var signature: CodeSignature.Status?
 
-    public init(installation: Installation, version: Version? = nil) {
+    public init(installation: Installation, version: Version? = nil,
+                signature: CodeSignature.Status? = nil) {
         self.installation = installation
         self.version = version
+        self.signature = signature
     }
 
     /// Set whenever a binary was found — even if its version is too old or
@@ -167,6 +172,9 @@ public struct ClaudeReadiness: Sendable, Equatable {
             case .supported(let v): lines.append("version: \(v)")
             case .untested(let v): lines.append("version: \(v) (newer than tested)")
             }
+        }
+        if let signature = cli.signature {
+            lines.append("signature: \(signature)")
         }
         switch auth {
         case .signedOut:

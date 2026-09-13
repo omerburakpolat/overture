@@ -55,7 +55,7 @@ struct ClaudeSettingsPane: View {
             toolSection
         }
         .formStyle(.grouped)
-        .task { await appState.services.refreshClaude(reason: .becameActive) }
+        .task { await appState.services.refreshClaude(reason: .settingsOpened) }
         .fileImporter(isPresented: $choosingCLI,
                       allowedContentTypes: [.unixExecutable, .executable]) { result in
             if case .success(let url) = result {
@@ -176,15 +176,7 @@ struct ClaudeSettingsPane: View {
                 }
                 if let divergence = readiness?.shellDivergence,
                    divergence.hasDivergence {
-                    Label("Your login shell also defines "
-                          + divergence.names.map(\.rawValue)
-                              .joined(separator: ", ")
-                          + ". Overture doesn't read your shell profile, so "
-                          + "`claude` in Terminal and agents here may use "
-                          + "different credentials.",
-                          systemImage: DS.Icon.info)
-                        .font(DS.TypeStyle.cardMeta)
-                        .foregroundStyle(DS.Color.Text.secondary)
+                    ShellDivergenceAdvice(names: divergence.names)
                 }
             }
         }
@@ -198,6 +190,26 @@ struct ClaudeSettingsPane: View {
                 Text(appState.services.claudeURL?.path ?? "not found")
                     .font(DS.TypeStyle.code)
                     .textSelection(.enabled)
+            }
+            if let signature = readiness?.cli.signature {
+                LabeledContent("Signed by") {
+                    switch signature {
+                    case .anthropic:
+                        Label("Anthropic PBC (\(CodeSignature.anthropicTeamID))",
+                              systemImage: DS.Icon.finished)
+                            .foregroundStyle(DS.Status.success.text)
+                    case .otherDeveloper:
+                        Label("Another developer, not Anthropic",
+                              systemImage: DS.Icon.info)
+                            .foregroundStyle(DS.Status.caution.text)
+                    case .unsignedOrModified:
+                        Label("Not signed", systemImage: DS.Icon.info)
+                            .foregroundStyle(DS.Status.caution.text)
+                    case .unverified:
+                        Text("Couldn't check")
+                            .foregroundStyle(DS.Color.Text.tertiary)
+                    }
+                }
             }
             if let version = readiness?.cli.version {
                 LabeledContent("Version") {

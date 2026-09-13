@@ -78,6 +78,7 @@ struct WelcomeView: View {
                                 + searched.joined(separator: ", "))
             case .found(let url):
                 cliVersionRow(readiness.cli, path: url.path)
+                signatureRow(readiness.cli)
             }
 
             if readiness.cli.isUsable {
@@ -120,6 +121,23 @@ struct WelcomeView: View {
             checklistRow(icon: DS.Icon.finished, tint: DS.Status.success,
                          title: "Claude Code \(found)", detail: path)
         case nil:
+            EmptyView()
+        }
+    }
+
+    /// A warning, never a block — a developer build of Claude Code is a
+    /// legitimate thing to run. Silent when the check couldn't run.
+    @ViewBuilder
+    private func signatureRow(_ cli: CLIStatus) -> some View {
+        switch cli.signature {
+        case .otherDeveloper?, .unsignedOrModified?:
+            checklistRow(
+                icon: DS.Icon.info, tint: DS.Status.caution,
+                title: "This claude isn't signed by Anthropic",
+                detail: "Overture will still use it. If you didn't build or "
+                    + "choose it yourself, reinstall with `brew install --cask "
+                    + "claude-code`, or pick the right one in Settings.")
+        default:
             EmptyView()
         }
     }
@@ -172,13 +190,20 @@ struct WelcomeView: View {
                          detail: credential.explanation)
         }
         if let divergence = readiness.shellDivergence, divergence.hasDivergence {
-            checklistRow(
-                icon: DS.Icon.info, tint: DS.Status.neutral,
-                title: "Your login shell defines credentials Overture can't see",
-                detail: divergence.names.map(\.rawValue)
-                    .joined(separator: ", ")
-                    + " — `claude` in Terminal and agents in Overture may use "
-                    + "different credentials.")
+            // Same row chrome as `checklistRow`, with room for the snippet.
+            HStack(alignment: .top, spacing: DS.Space.s300) {
+                Image(systemName: DS.Icon.info)
+                    .foregroundStyle(DS.Status.neutral.text)
+                VStack(alignment: .leading, spacing: DS.Space.s100) {
+                    Text("Your login shell sets variables Overture can't see")
+                        .font(DS.TypeStyle.cardTitle)
+                    ShellDivergenceAdvice(names: divergence.names)
+                }
+            }
+            .padding(DS.Space.s300)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.Status.neutral.tint,
+                        in: RoundedRectangle(cornerRadius: DS.Radius.panel))
         }
     }
 

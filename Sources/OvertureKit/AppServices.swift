@@ -87,13 +87,19 @@ public final class AppServices {
         case launch, manual, becameActive, wake, afterSignIn, afterAuthFailure
         /// Just before an agent process starts (see `ensureReadyToRun`).
         case preflight
+        /// The Settings pane appeared: worth fresh data, not worth a burst.
+        case settingsOpened
 
         var bypassesDebounce: Bool {
             switch self {
             case .manual, .afterSignIn, .afterAuthFailure, .launch, .preflight: true
-            case .becameActive, .wake: false
+            case .becameActive, .wake, .settingsOpened: false
             }
         }
+
+        /// Switching back to the app, or waking the Mac, when everything
+        /// already works is not news.
+        var isAmbient: Bool { self == .becameActive || self == .wake }
 
         /// Only a person acting — signing in, or pressing Check Again — may
         /// clear an authentication failure. An automatic probe can't: a
@@ -101,12 +107,17 @@ public final class AppServices {
         var clearsAuthInterruption: Bool {
             switch self {
             case .manual, .afterSignIn: true
-            case .launch, .becameActive, .wake, .afterAuthFailure, .preflight: false
+            case .launch, .becameActive, .wake, .afterAuthFailure, .preflight,
+                 .settingsOpened: false
             }
         }
     }
 
     public static let refreshDebounce: TimeInterval = 30
+    /// While everything works and nothing has failed, focus and wake events
+    /// re-check at most this often. The pre-flight check still guards every
+    /// agent start, so this costs no safety.
+    public static let readyRecheckInterval: TimeInterval = 600
     /// How old a readiness answer may be before an agent start re-checks it.
     public static let preflightMaxAge: TimeInterval = 120
 
@@ -115,6 +126,11 @@ public final class AppServices {
 
     @discardableResult
     public func refreshClaude(reason: RefreshReason = .manual) async -> ClaudeReadiness? {
+        if reason.isAmbient, claude?.canSpawn == true, !authInterrupted,
+           let lastRefresh,
+           now().timeIntervalSince(lastRefresh) < Self.readyRecheckInterval {
+            return claude
+        }
         if !reason.bypassesDebounce, let lastRefresh,
            now().timeIntervalSince(lastRefresh) < Self.refreshDebounce {
             return claude
