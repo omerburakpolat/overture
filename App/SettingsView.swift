@@ -38,6 +38,16 @@ struct ClaudeSettingsPane: View {
 
     private var readiness: ClaudeReadiness? { appState.services.claude }
 
+    /// Names the login an environment credential is bypassing, when the second
+    /// status probe found one.
+    private var bypassedLoginText: String {
+        if let stored = readiness?.storedLogin, stored.loggedIn {
+            let who = stored.email ?? stored.authMethod.displayName
+            return "Your signed-in account (\(who)) is not being used."
+        }
+        return "This overrides the account signed in to Claude Code."
+    }
+
     var body: some View {
         Form {
             accountSection
@@ -150,7 +160,7 @@ struct ClaudeSettingsPane: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if credential.overridesReportedLogin {
-                    Label("This overrides the account signed in above.",
+                    Label(bypassedLoginText,
                           systemImage: DS.Icon.error)
                         .font(DS.TypeStyle.cardMeta)
                         .foregroundStyle(DS.Status.caution.text)

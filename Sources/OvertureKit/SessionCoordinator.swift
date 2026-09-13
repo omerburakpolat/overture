@@ -77,6 +77,10 @@ public final class SessionCoordinator {
 
     private let services: AppServices
     private var pumps: [UUID: Task<Void, Never>] = [:]
+    /// Cards whose current turn already reported an authentication failure,
+    /// so ten retries produce one notice and the turn's result adds no generic
+    /// "Turn ended" row on top.
+    private var authFailedThisTurn: Set<UUID> = []
 
     public init(services: AppServices) {
         self.services = services
@@ -343,6 +347,10 @@ public final class SessionCoordinator {
         guard let project = card.project,
               let claudeURL = services.claudeURL,
               testSessionKeys[card.id] == nil else { return }
+        guard await services.ensureReadyToRun() else {
+            refuseToStart(card: card)
+            return
+        }
         let cwd = card.worktreePath.map(URL.init(fileURLWithPath:))
             ?? URL(fileURLWithPath: project.path)
         let sessionID = UUID()
@@ -501,6 +509,10 @@ public final class SessionCoordinator {
                 "Project not trusted yet — allow Overture to run Claude here first."
             return
         }
+        guard await services.ensureReadyToRun() else {
+            refuseToStart(card: card)
+            return
+        }
         let cwd = card.worktreePath.map(URL.init(fileURLWithPath:))
             ?? URL(fileURLWithPath: project.path)
 
@@ -562,16 +574,20 @@ public final class SessionCoordinator {
         }
     }
 
-    /// A session could not authenticate. The card stops with a message the
-    /// user can act on, and the app re-probes so Settings and the board
-    /// banner reflect reality.
-    func handleAuthenticationFailure(cardID: UUID) {
+    /// A session could not authenticate. The card stops with the CLI's own
+    /// reason, the app re-probes so Settings and the board banner reflect
+    /// reality, and no new agent starts until someone signs in or checks again
+    /// (see `AppServices.ensureReadyToRun`). Reported once per turn: a
+    /// rejected key arrives up to ten times.
+    func handleAuthenticationFailure(cardID: UUID, reason: String? = nil) {
+        guard authFailedThisTurn.insert(cardID).inserted else { return }
+        let because = Self.authFailureReason(reason).map { ": \($0)" } ?? ""
         live[cardID, default: .init()].lastError =
-            "Claude Code could not authenticate. Sign in again to continue."
+            "Claude Code could not authenticate\(because). Sign in again to continue."
         appendLive(cardID, .init(
             id: UUID().uuidString, kind: .notice,
-            text: "Claude Code could not authenticate. This run stopped — "
-                + "sign in again, then resume the card."))
+            text: "Claude Code could not authenticate\(because). This run "
+                + "stopped — sign in again, then resume the card."))
         if let card = fetchCard(cardID) {
             try? BoardEngine.apply(.errored, to: card, in: context)
             ActivityLog.record(.agentFinished,
@@ -580,6 +596,29 @@ public final class SessionCoordinator {
             try? context.save()
         }
         Task { [services] in await services.handleAuthenticationFailure() }
+    }
+
+    /// Stops a turn the CLI would otherwise keep retrying with a dead
+    /// credential. Marked as a pending interrupt so the result that follows
+    /// isn't reported as a second, generic failure.
+    private func interruptAfterAuthFailure(cardID: UUID) async {
+        guard let supervisor = await services.processManager
+            .supervisor(for: cardID) else { return }
+        interruptsPending.insert(cardID)
+        try? await supervisor.interrupt(cancelQueued: true)
+    }
+
+    /// A run was asked for while Claude Code can't authenticate. Starting it
+    /// would spawn a process that fails — or, with a rejected key, retries for
+    /// minutes first. The card says why instead; the board banner offers the
+    /// way out.
+    private func refuseToStart(card: Card) {
+        live[card.id, default: .init()].lastError = services.authInterrupted
+            ? "Claude Code could not authenticate. Sign in again, or fix the "
+                + "credential shown in Settings, then start the card again."
+            : "Claude Code isn't signed in. Sign in, then start the card again."
+        try? BoardEngine.apply(.errored, to: card, in: context)
+        try? context.save()
     }
 
     // MARK: - Event pump
@@ -674,7 +713,12 @@ public final class SessionCoordinator {
             }
             // A user interrupt already shows as the transcript's own
             // interjection line; only genuine failures get a row.
-            let interrupted = card.subState == .interrupted
+            // An authentication failure already stopped the card with its own
+            // notice and activity row; the generic rows would only repeat it
+            // less clearly.
+            let authFailed = authFailedThisTurn.remove(cardID) != nil
+            if !result.isError { services.noteSuccessfulTurn() }
+            let interrupted = authFailed || card.subState == .interrupted
                 || (result.isError && interruptsPending.contains(cardID))
             // Consumed by whichever result arrives first, however it ended. A
             // Stop that raced the turn finishing cleanly used to leave the flag
@@ -689,14 +733,14 @@ public final class SessionCoordinator {
                 ActivityLog.record(
                     result.isError ? .agentNeedsInput : .agentFinished,
                     result.isError
-                        ? "Run stopped: \(Self.describe(result.subtype))"
+                        ? "Run stopped: \(Self.failureDescription(result))"
                         : "Run finished",
                     on: card, in: context)
             } else if result.isError, !interrupted, runKind != .testRun,
                       runKind != .autonomousRun {
                 appendLive(cardID, .init(
                     id: UUID().uuidString, kind: .notice,
-                    text: "Turn ended: \(Self.describe(result.subtype))"))
+                    text: "Turn ended: \(Self.failureDescription(result))"))
             }
             if let effects = try? BoardEngine.apply(
                 .runEnded(success: !result.isError,
@@ -713,6 +757,12 @@ public final class SessionCoordinator {
                                     : "Finished — waiting in "
                                       + card.column.displayName + "."))
             }
+            if authFailed, runKind != .interactiveChat {
+                onNotice?(.init(cardID: cardID, cardTitle: card.title,
+                                kind: .agentErrored,
+                                body: "Claude Code could not authenticate — "
+                                    + "sign in again to continue."))
+            }
             try? context.save()
 
         case .apiRetry(let retry):
@@ -721,16 +771,30 @@ public final class SessionCoordinator {
                 appendLive(cardID, .init(
                     id: UUID().uuidString, kind: .notice,
                     text: "Claude usage limit — retrying automatically."))
-            case "authentication_failed":
-                // Never auto-retried (spec 01 §7.4): retrying a dead
-                // credential burns the run and tells the user nothing. Stop,
-                // say so specifically, and let the UI offer a sign-in.
+            case .some(ClaudeEvent.authenticationFailed):
+                // Never auto-retried (spec 01 §7.4). The CLI itself retries a
+                // rejected key up to ten times with growing delays — measured:
+                // ten attempts, 34 s apart by the last — so stop the turn on
+                // the first instead of leaving the card spinning for minutes.
+                let first = !authFailedThisTurn.contains(cardID)
                 handleAuthenticationFailure(cardID: cardID)
+                if first {
+                    Task { await self.interruptAfterAuthFailure(cardID: cardID) }
+                }
             default:
                 break
             }
 
         case .event(let claudeEvent):
+            // An expired or revoked login arrives as a synthetic assistant
+            // message carrying `error: authentication_failed` — never as
+            // `api_retry` (measured, CLI 2.1.236). The retry branch alone
+            // missed the most common authentication failure there is.
+            if case .assistant(let message) = claudeEvent,
+               message.parentToolUseID == nil,
+               message.error == ClaudeEvent.authenticationFailed {
+                handleAuthenticationFailure(cardID: cardID, reason: message.text)
+            }
             renderLive(claudeEvent, cardID: cardID, card: card)
 
         case .processEnded(let exit, let stderrTail):
@@ -742,6 +806,7 @@ public final class SessionCoordinator {
             live[cardID]?.activity = .ended(exit)
             live[cardID]?.streamingText = ""
             interruptsPending.remove(cardID)
+            authFailedThisTurn.remove(cardID)
             live[cardID, default: .init()].historyGeneration += 1
             for session in card.sessions where session.exitReason == nil {
                 session.endedAt = .now
@@ -757,6 +822,19 @@ public final class SessionCoordinator {
             // Subagent traffic is a sidechain in the transcript — it never
             // shows in the primary thread (spec 01 §2.1).
             guard message.parentToolUseID == nil else { return }
+            if message.isAPIErrorMessage || message.error != nil {
+                // A failed API call the CLI rendered as assistant text, not
+                // model output. Auth failures already have their own notice;
+                // any other kind is shown as one rather than as Claude
+                // speaking.
+                if message.error != ClaudeEvent.authenticationFailed,
+                   !message.text.isEmpty {
+                    appendLive(cardID, .init(
+                        id: message.raw["uuid"]?.stringValue ?? UUID().uuidString,
+                        kind: .notice, text: Redaction.scrub(message.text)))
+                }
+                return
+            }
             if !message.text.isEmpty {
                 appendLive(cardID, .init(
                     id: message.raw["uuid"]?.stringValue ?? UUID().uuidString,
@@ -833,6 +911,33 @@ public final class SessionCoordinator {
 
     /// Human wording for a `result` subtype (open set; keep the raw for
     /// anything new).
+    /// Wording for a failed turn. The CLI marks some failures `success` +
+    /// `is_error` (an expired login does), and then the reason is only in the
+    /// result text — "Turn ended: success" says nothing.
+    nonisolated static func failureDescription(_ result: ClaudeEvent.TurnResult) -> String {
+        guard result.subtype == "success", result.isError else {
+            return describe(result.subtype)
+        }
+        let firstLine = result.resultText?
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first.map { String($0.prefix(120)) } ?? ""
+        return firstLine.isEmpty ? "error" : Redaction.scrub(firstLine)
+    }
+
+    /// The CLI's reason with its repeated "Failed to authenticate" prefix and
+    /// trailing period removed, ready to embed in a sentence. Scrubbed.
+    nonisolated static func authFailureReason(_ text: String?) -> String? {
+        guard var reason = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !reason.isEmpty else { return nil }
+        let prefix = "Failed to authenticate"
+        if reason.hasPrefix(prefix) {
+            reason = String(reason.dropFirst(prefix.count)
+                .drop { ":. ".contains($0) })
+        }
+        while reason.hasSuffix(".") { reason.removeLast() }
+        return reason.isEmpty ? nil : Redaction.scrub(reason)
+    }
+
     nonisolated static func describe(_ subtype: String) -> String {
         switch subtype {
         case "error_max_budget_usd": "budget cap reached"

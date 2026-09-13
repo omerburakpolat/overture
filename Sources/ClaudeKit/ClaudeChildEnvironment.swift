@@ -63,8 +63,10 @@ public enum ClaudeChildEnvironment {
         // 2–3. Bearer token, then API key.
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
-        // 5. Long-lived OAuth token from `claude setup-token`.
+        // 5. Long-lived OAuth token from `claude setup-token`, and the refresh
+        //    token `claude auth login` can exchange instead of a browser.
         "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
         // 6. Anthropic profile / Workload Identity Federation.
         "ANTHROPIC_PROFILE",
         "ANTHROPIC_FEDERATION_RULE_ID",
@@ -94,6 +96,31 @@ public enum ClaudeChildEnvironment {
         }
         for (key, value) in markers { environment[key] = value }
         return environment
+    }
+
+    /// Environment credentials that outrank a stored `claude auth login`
+    /// (documented precedence levels 2, 3, 5 and 6). Cloud-provider switches
+    /// are deliberately absent: they change where requests go, not which
+    /// login is bypassed.
+    public static let credentialOverrides: [EnvVarName] = [
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_PROFILE",
+        "ANTHROPIC_FEDERATION_RULE_ID",
+        "ANTHROPIC_ORGANIZATION_ID",
+    ]
+
+    /// `environment` with every `credentialOverrides` name removed, used to ask
+    /// the CLI which login sits underneath. Removes names; reads no value.
+    public static func removingCredentialOverrides(
+        from environment: [String: String]
+    ) -> [String: String] {
+        var stripped = environment
+        for name in credentialOverrides {
+            stripped.removeValue(forKey: name.rawValue)
+        }
+        return stripped
     }
 
     /// Names from `credentialRelevant` that are present in `environment`.

@@ -95,14 +95,18 @@ public struct ClaudeEnvironmentCheck: Sendable {
 
         let auth = await probeAuth(executable: executable,
                                    environment: environment)
+        let storedLogin = await storedLoginBeneathOverrides(
+            executable: executable, environment: environment)
         let credential = auth.account.map {
             CredentialPrecedence.resolve(account: $0,
-                                         childEnvironment: environment)
+                                         childEnvironment: environment,
+                                         storedLogin: storedLogin)
         }
         let divergence = await probes.shellDivergence(environment)
         return ClaudeReadiness(cli: cli, auth: auth,
                                effectiveCredential: credential,
                                shellDivergence: divergence,
+                               storedLogin: storedLogin,
                                checkedAt: probes.now())
     }
 
@@ -121,6 +125,26 @@ public struct ClaudeEnvironmentCheck: Sendable {
                                          rawStderr: result.stderrTail))
         }
         return .success(())
+    }
+
+    /// Asks the CLI who is signed in *underneath* any environment credential,
+    /// by probing again with those variable names removed. Runs only when one
+    /// is present, so the ordinary case costs nothing extra.
+    ///
+    /// The status shape alone can't answer this: with a key set, the CLI has
+    /// reported `claude.ai` + `apiKeySource` where a working login existed and
+    /// plain `api_key` where none did. Names are removed; no value is read.
+    private func storedLoginBeneathOverrides(
+        executable: URL, environment: [String: String]
+    ) async -> ClaudeAccount? {
+        let hasOverride = ClaudeChildEnvironment.credentialOverrides.contains {
+            !(environment[$0.rawValue] ?? "").isEmpty
+        }
+        guard hasOverride else { return nil }
+        let result = await probes.capture(
+            executable, ["auth", "status", "--json"],
+            ClaudeChildEnvironment.removingCredentialOverrides(from: environment))
+        return ClaudeAccount(json: result.stdout)
     }
 
     // MARK: - Steps

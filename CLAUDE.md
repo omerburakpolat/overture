@@ -127,6 +127,15 @@ substitute for not writing the secret down.
   `user@example.com` and a zero UUID. `FixtureHygieneTests` scans every fixture
   for a real-looking email or home directory, because a find/replace misses
   fragments split mid-token across `partial_json` chunks.
+- **Measure CLI behaviour in a clean environment.** A process started from
+  inside a Claude Code desktop session inherits a messaging socket its host
+  uses to keep the login fresh, which hides expired logins and ignored
+  credentials — one wrong conclusion about `ANTHROPIC_AUTH_TOKEN` shipped that
+  way. Use `env -i HOME="$HOME" PATH=/opt/homebrew/bin:/usr/bin:/bin …`, or the
+  environment `ClaudeChildEnvironment.make()` builds.
+- **Scripts that touch git run from an absolute path and stop on failure**:
+  `set -euo pipefail` and `git -C <path>`. Parallel sessions share this
+  checkout, and a failed `cd` once let `git reset --hard` run in the wrong one.
 - **One place builds the child environment**: `ClaudeChildEnvironment.make()`.
   It strips nested-session markers **by exact name, never by prefix** — a
   `CLAUDE` prefix sweep also removes `CLAUDE_CONFIG_DIR` (which selects the

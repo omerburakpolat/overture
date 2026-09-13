@@ -27,19 +27,20 @@ import Testing
         #expect(resolution.confidence == .reportedByCLI)
     }
 
-    /// Level 2, the measured blind spot. `auth status` still reports
-    /// `claude.ai`, and a request made with a deliberately bogus value still
-    /// succeeded on the signed-in account — so this is surfaced as
-    /// information and must NOT claim to override the login. A false
-    /// "you are billed differently" warning is worse than none.
-    @Test func authTokenIsReportedWithoutClaimingAnOverride() {
+    /// Level 2, the blind spot: `auth status` never reports it, but it is
+    /// sent — a bogus value fails with "401 Invalid bearer token" in a clean
+    /// environment. An earlier version of this test asserted the opposite,
+    /// from a measurement taken inside a Claude Code desktop session whose
+    /// host masked the token. With no stored-login probe, the CLI's
+    /// `claude.ai` shape means a login is being bypassed.
+    @Test func authTokenOverridesTheReportedLogin() {
         let resolution = CredentialPrecedence.resolve(
             account: signedIn(),
             childEnvironment: ["ANTHROPIC_AUTH_TOKEN": "secret"])
         #expect(resolution.level == 2)
         #expect(resolution.confidence == .inferredFromEnvironment)
-        #expect(resolution.overridesReportedLogin == false)
-        #expect(resolution.explanation.contains("cannot confirm"))
+        #expect(resolution.overridesReportedLogin == true)
+        #expect(resolution.explanation.contains("not your signed-in account"))
     }
 
     /// Level 3 — the case that costs money silently. Overture spawns every

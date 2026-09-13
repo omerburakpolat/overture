@@ -56,9 +56,14 @@ public final class AppServices {
         guard let credential = claude?.effectiveCredential else { return false }
         switch credential.source {
         case .apiKeyEnvironment, .apiKeyHelper, .authTokenEnvironment,
-             .cloudProvider:
+             .cloudProvider, .profile:
             return true
-        case .oauthTokenEnvironment, .profile, .storedLogin, .none:
+        case .oauthTokenEnvironment:
+            // `claude setup-token` tokens authenticate with a subscription.
+            // Their status shape carries no plan, which used to read as "not
+            // a subscription" and show exact dollars.
+            return false
+        case .storedLogin, .none:
             return account?.isSubscription == false
         }
     }
@@ -76,25 +81,42 @@ public final class AppServices {
                 ?? supportDir.appendingPathComponent("running-agents.json"))
     }
 
-    /// Why a probe is happening. Only `.manual` bypasses the debounce — the
-    /// rest fire on app focus and wake, which can arrive in bursts.
+    /// Why a probe is happening. Deliberate checks bypass the debounce; focus
+    /// and wake events arrive in bursts and do not.
     public enum RefreshReason: Sendable {
         case launch, manual, becameActive, wake, afterSignIn, afterAuthFailure
+        /// Just before an agent process starts (see `ensureReadyToRun`).
+        case preflight
 
         var bypassesDebounce: Bool {
             switch self {
-            case .manual, .afterSignIn, .afterAuthFailure, .launch: true
+            case .manual, .afterSignIn, .afterAuthFailure, .launch, .preflight: true
             case .becameActive, .wake: false
+            }
+        }
+
+        /// Only a person acting — signing in, or pressing Check Again — may
+        /// clear an authentication failure. An automatic probe can't: a
+        /// rejected API key still reports as signed in.
+        var clearsAuthInterruption: Bool {
+            switch self {
+            case .manual, .afterSignIn: true
+            case .launch, .becameActive, .wake, .afterAuthFailure, .preflight: false
             }
         }
     }
 
     public static let refreshDebounce: TimeInterval = 30
+    /// How old a readiness answer may be before an agent start re-checks it.
+    public static let preflightMaxAge: TimeInterval = 120
+
+    /// Test seam for the debounce and pre-flight clocks.
+    @ObservationIgnored public var now: () -> Date = { Date() }
 
     @discardableResult
     public func refreshClaude(reason: RefreshReason = .manual) async -> ClaudeReadiness? {
         if !reason.bypassesDebounce, let lastRefresh,
-           Date().timeIntervalSince(lastRefresh) < Self.refreshDebounce {
+           now().timeIntervalSince(lastRefresh) < Self.refreshDebounce {
             return claude
         }
         guard !refreshInFlight else { return claude }
@@ -103,9 +125,39 @@ public final class AppServices {
 
         let readiness = await environmentCheck.run()
         claude = readiness
-        lastRefresh = Date()
-        if readiness.canSpawn { authInterrupted = false }
+        lastRefresh = now()
+        if readiness.canSpawn, reason.clearsAuthInterruption {
+            authInterrupted = false
+        }
         return readiness
+    }
+
+    /// Asked before any agent process starts. A dead login otherwise shows up
+    /// only once a run has begun — for an unattended run, possibly hours
+    /// later. `claude auth status` reports an expired, unrefreshable login as
+    /// signed out in about a quarter of a second, without Overture reading any
+    /// credential, so an answer older than `preflightMaxAge` is refreshed
+    /// first.
+    ///
+    /// After an authentication failure this stays false until a person signs
+    /// in or checks again: a rejected API key still reports as signed in, so
+    /// no probe can prove it was fixed.
+    public func ensureReadyToRun() async -> Bool {
+        if authInterrupted { return false }
+        if claudeURLOverride != nil { return true }
+        let stale = lastRefresh.map {
+            now().timeIntervalSince($0) >= Self.preflightMaxAge
+        } ?? true
+        if stale || claude?.canSpawn != true {
+            await refreshClaude(reason: .preflight)
+        }
+        return claude?.canSpawn == true
+    }
+
+    /// A turn finished without error, so whatever broke authentication has
+    /// recovered — lift the stop.
+    public func noteSuccessfulTurn() {
+        if authInterrupted { authInterrupted = false }
     }
 
     /// Runs `claude auth logout`. This signs the CLI out everywhere on the

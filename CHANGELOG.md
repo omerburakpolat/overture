@@ -32,11 +32,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A failed sign-in showed an empty box. The CLI reports login failures on
   stderr, which was never read, and its "paste code" prompt has no trailing
   newline so it never reached the UI at all.
-- An expired or rejected credential mid-run surfaced as a generic error.
-  It now stops the run with a specific message and offers a sign-in.
+- An expired login mid-run surfaced as "Turn ended: success", with the CLI's
+  error shown as if Claude had said it. Claude Code reports an expired login
+  as a failed assistant message rather than a retry, which Overture didn't
+  recognise. The run now stops with the reason and a sign-in prompt.
+- A rejected API key left a card spinning while Claude Code retried it ten
+  times. Overture now stops it on the first retry.
+- After an authentication failure, further agents still started and failed the
+  same way. None start now until you sign in or check again, and every agent
+  start first confirms Claude Code can authenticate.
 - A probe that could not run was reported as "you are not signed in".
 - Dollar figures were shown as estimates for subscription accounts even when
   an API key in Overture's environment meant real per-token billing.
+- `ANTHROPIC_AUTH_TOKEN` in Overture's environment was reported as information
+  only. It does replace your signed-in account, and Settings now says so.
+- Whether an environment credential bypasses your signed-in account no longer
+  depends on the shape of `claude auth status` output; Settings names the
+  login that isn't being used.
+- Long-lived `claude setup-token` tokens were shown with exact dollar costs.
+  They bill a subscription, so costs are now estimates.
 
 ## [0.1.0] — 2026-09-06
 

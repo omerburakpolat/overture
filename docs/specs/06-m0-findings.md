@@ -81,6 +81,8 @@ facts documented here independently).
 
 Measured by probing the shipped binary and by running `claude auth login` over
 pipes in a scratch `CLAUDE_CONFIG_DIR`. Recorded so nobody re-derives them.
+Items 1–11 were recorded on 2026-09-07; items 12–18, and the correction to
+item 5, on 2026-09-13 — read item 12 before trusting any request-time result.
 
 1. **`auth status --json` field set** is `loggedIn`, `authMethod`,
    `apiProvider`, `forcedLoginMethod?`, `apiKeySource?`, `email?`, `orgId?`,
@@ -96,11 +98,13 @@ pipes in a scratch `CLAUDE_CONFIG_DIR`. Recorded so nobody re-derives them.
    `CLAUDE_CODE_USE_BEDROCK` → `third_party`/`bedrock`; `ANTHROPIC_API_KEY` →
    an `apiKeySource` field; `CLAUDE_CODE_OAUTH_TOKEN` → `oauth_token` with
    **every identity field dropped**; `ANTHROPIC_AUTH_TOKEN` → **not reported
-   at all**.
-5. **`ANTHROPIC_AUTH_TOKEN` is not honoured on a first-party setup.** A `-p`
-   turn with a deliberately bogus value still succeeded on the signed-in
-   account. Overture therefore reports it as information and does **not**
-   claim it overrides the login — a false billing warning is worse than none.
+   at all** (yet sent — see 5).
+5. **`ANTHROPIC_AUTH_TOKEN` is sent, even though it is never reported.** In a
+   clean environment a `-p` turn with a deliberately bogus value fails with
+   `401 Invalid bearer token`, so it does replace a signed-in account and
+   Overture flags it as an override. *Corrected 2026-09-13:* this item
+   originally said the token was ignored. That run happened inside a Claude
+   Code desktop session, whose host masked it (item 12).
 6. **`claude auth login` needs no TTY.** It is `readline` + `stdout.write`,
    not a full-screen UI. Over pipes with stdin at `/dev/null` it emits:
 
@@ -126,3 +130,37 @@ pipes in a scratch `CLAUDE_CONFIG_DIR`. Recorded so nobody re-derives them.
 11. **Gateway policy refuses `auth login` outright**:
     `forceLoginMethod is 'gateway' in managed settings; run interactive
     /login to authenticate.` Those users get the terminal instructions only.
+12. **Measure request-time behaviour in a clean environment.** A process
+    started from inside a Claude Code desktop session inherits
+    `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`, and the host keeps the login fresh
+    for it over that socket: an expired standalone login still works there,
+    and an environment credential can be ignored. Use `env -i HOME="$HOME"
+    PATH=/opt/homebrew/bin:/usr/bin:/bin …`, or the environment
+    `ClaudeChildEnvironment.make()` builds — it strips those markers, so it
+    behaves like a Dock launch (verified: identical results).
+13. **An expired login arrives as an assistant message, not `api_retry`**:
+    `{"type":"assistant","error":"authentication_failed", …}` whose text is
+    `Failed to authenticate: OAuth session expired and could not be refreshed`,
+    then a `result` with `subtype: "success"` **and** `is_error: true`, then
+    exit 1.
+14. **A rejected API key is retried ten times first**: ten `system/api_retry`
+    events with `error: "authentication_failed"`, `error_status: 401`, delays
+    growing to ~34 s, then the same assistant/result pair. Overture interrupts
+    on the first retry.
+15. **`auth status` reports an expired, unrefreshable login as signed out**
+    (`loggedIn: false`, `authMethod: "none"`) in ~0.3 s, so a pre-flight check
+    before an agent starts catches it without reading any credential. A
+    *rejected* key, by contrast, still reports `loggedIn: true` — only a
+    request reveals it.
+16. **The status shape for an API key depends on what sits underneath**:
+    observed as `claude.ai` + `apiKeySource` where the stored login worked,
+    and as `authMethod: "api_key"` where it did not. Overture asks a second
+    time with the credential variable names removed instead of inferring from
+    the shape.
+17. **`settings.json`'s `env` block selects a provider**: with
+    `{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"}}` in a config dir, `auth status`
+    reports `third_party`/`bedrock` however `claude` was launched.
+18. **The Homebrew binary is signed `Developer ID Application: Anthropic PBC
+    (Q6L2SF6YDW)`.** `codesign --verify --strict -R='anchor apple generic and
+    certificate leaf[subject.OU] = "Q6L2SF6YDW"'` exits 0 for it, 3 for a
+    binary signed by another team, and 1 for an unsigned one, in ~0.7 s.

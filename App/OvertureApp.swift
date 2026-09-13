@@ -202,13 +202,23 @@ struct RootView: View {
             Image(systemName: DS.Icon.awaitingPermission)
                 .foregroundStyle(DS.Status.caution.text)
             Text(appState.services.authInterrupted
-                 ? "Claude Code could not authenticate. Agents are stopped "
-                    + "until you sign in again."
+                 ? "Claude Code could not authenticate. No agent will start "
+                    + "until you sign in again or fix the credential shown in "
+                    + "Settings."
                  : "Claude Code isn't ready. Agents can't run until it is.")
                 .font(DS.TypeStyle.cardMeta)
                 .foregroundStyle(DS.Color.Text.primary)
             Spacer()
-            Button("Set Up\u{2026}") { dismissedSetup = false }
+            if appState.services.claude?.canSpawn == true {
+                // Signed in again elsewhere, or a credential fixed in
+                // Settings: a deliberate check is what lifts the stop, because
+                // a rejected key still reports as signed in.
+                Button("Check Again") {
+                    Task { await appState.services.refreshClaude(reason: .manual) }
+                }
+            } else {
+                Button("Set Up\u{2026}") { dismissedSetup = false }
+            }
         }
         .padding(.horizontal, DS.Space.s400)
         .padding(.vertical, DS.Space.s300)

@@ -71,12 +71,26 @@ public enum CredentialPrecedence {
     /// `ClaudeChildEnvironment.make()` produced for the spawns being
     /// described — not the app's own environment. Passing anything else makes
     /// the answer a guess about a process that will never exist.
+    ///
+    /// `storedLogin` is the CLI's answer with every
+    /// `ClaudeChildEnvironment.credentialOverrides` name removed — who is
+    /// signed in underneath. When it is known, "is a login being bypassed?"
+    /// no longer depends on which JSON shape the CLI happened to report.
     public static func resolve(account: ClaudeAccount,
-                               childEnvironment: [String: String]) -> Resolution {
+                               childEnvironment: [String: String],
+                               storedLogin: ClaudeAccount? = nil) -> Resolution {
         func isSet(_ name: EnvVarName) -> Bool {
             guard let value = childEnvironment[name.rawValue] else { return false }
             return !value.isEmpty
         }
+
+        // Whether an environment credential is bypassing a real stored login.
+        // `storedLogin` settles it. Without one, fall back to the shape of
+        // `account`: the CLI has been seen reporting `claude.ai` beside an
+        // override when a working login sits underneath, and plain `api_key`
+        // when none does.
+        let bypassesStoredLogin = storedLogin.map(\.loggedIn)
+            ?? (account.authMethod == .claudeAI)
 
         // 1. A cloud provider outranks everything, and the CLI reports it.
         if !account.apiProvider.isFirstParty {
@@ -94,30 +108,31 @@ public enum CredentialPrecedence {
                 explanation: "Requests go to \(account.apiProvider.displayName).")
         }
 
-        // 2. ANTHROPIC_AUTH_TOKEN. Anthropic documents this as outranking a
-        // stored login, but measured behaviour disagrees on a first-party
-        // setup: `auth status` does not report it, and a request made with a
-        // deliberately bogus value still succeeded on the signed-in account.
-        // It is therefore reported as information, not as an override —
-        // a false "you are being billed differently" warning is worse than
-        // no warning. Revisit if a gateway/proxy configuration proves it is
-        // honoured there.
+        // 2. ANTHROPIC_AUTH_TOKEN — the blind spot: `auth status` never
+        // reports it, but it is sent. In a clean environment a bogus value
+        // fails with "401 Invalid bearer token". (An earlier measurement
+        // concluded it was ignored. That run happened inside a Claude Code
+        // desktop session, whose host keeps its children's login fresh over a
+        // socket and masked the token — see docs/specs/06-m0-findings.md.)
         if isSet("ANTHROPIC_AUTH_TOKEN"), account.apiKeySource == nil {
             return Resolution(
                 source: .authTokenEnvironment,
                 evidence: ["ANTHROPIC_AUTH_TOKEN"],
                 confidence: .inferredFromEnvironment,
-                overridesReportedLogin: false,
-                explanation: "ANTHROPIC_AUTH_TOKEN is set in this app's "
-                    + "environment. Anthropic documents it as taking "
-                    + "precedence over a signed-in account, but Claude Code "
-                    + "does not report it, so Overture cannot confirm which "
-                    + "one a request will use.")
+                overridesReportedLogin: bypassesStoredLogin,
+                explanation: bypassesStoredLogin
+                    ? "Agents will use ANTHROPIC_AUTH_TOKEN from this app's "
+                        + "environment, not your signed-in account. Claude Code "
+                        + "sends it in place of your login, even though "
+                        + "`claude auth status` doesn't report it."
+                    : "Agents will use ANTHROPIC_AUTH_TOKEN from this app's "
+                        + "environment. `claude auth status` doesn't report "
+                        + "it, but Claude Code sends it with every request.")
         }
 
         // 3. ANTHROPIC_API_KEY — the case that costs money silently.
         if account.apiKeySource == "ANTHROPIC_API_KEY" || isSet("ANTHROPIC_API_KEY") {
-            let overrides = account.authMethod == .claudeAI
+            let overrides = bypassesStoredLogin
             return Resolution(
                 source: .apiKeyEnvironment,
                 evidence: ["ANTHROPIC_API_KEY"],
@@ -144,17 +159,22 @@ public enum CredentialPrecedence {
                     + "Overture never runs it.")
         }
 
-        // 5. CLAUDE_CODE_OAUTH_TOKEN — reported, and it erases identity.
+        // 5. CLAUDE_CODE_OAUTH_TOKEN — reported, and it erases identity. An
+        // override only when a stored login is known to sit underneath.
         if account.authMethod == .oauthToken || isSet("CLAUDE_CODE_OAUTH_TOKEN") {
+            let overrides = storedLogin?.loggedIn == true
             return Resolution(
                 source: .oauthTokenEnvironment,
                 evidence: ["CLAUDE_CODE_OAUTH_TOKEN"],
                 confidence: account.authMethod == .oauthToken
                     ? .reportedByCLI : .inferredFromEnvironment,
-                // Not an override: there is no reported login to contradict.
-                overridesReportedLogin: false,
-                explanation: "A long-lived OAuth token is in use, so Claude Code "
-                    + "reports no account details for this session.")
+                overridesReportedLogin: overrides,
+                explanation: overrides
+                    ? "Agents will use the long-lived token in "
+                        + "CLAUDE_CODE_OAUTH_TOKEN, not your signed-in account, "
+                        + "so Claude Code reports no account details for them."
+                    : "A long-lived OAuth token is in use, so Claude Code "
+                        + "reports no account details for this session.")
         }
 
         // 6. Anthropic profile / Workload Identity Federation.
@@ -167,7 +187,7 @@ public enum CredentialPrecedence {
                 source: .profile,
                 evidence: profileEvidence,
                 confidence: .inferredFromEnvironment,
-                overridesReportedLogin: account.authMethod == .claudeAI,
+                overridesReportedLogin: bypassesStoredLogin,
                 explanation: "An Anthropic profile or federation credential is "
                     + "configured in this app's environment.")
         }

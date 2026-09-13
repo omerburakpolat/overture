@@ -37,6 +37,12 @@ public enum ClaudeEvent: Sendable {
     /// A line that wasn't valid JSON (never fatal; kept for diagnostics).
     case unparseable(line: String)
 
+    /// Claude Code's category for a request that could not authenticate. An
+    /// expired login delivers it as an assistant message's `error`; a
+    /// rejected key delivers it as `api_retry`'s `error`, up to ten times,
+    /// before that same assistant message. Measured on CLI 2.1.236.
+    public static let authenticationFailed = "authentication_failed"
+
     // MARK: Payloads
 
     public struct SystemInit: Sendable {
@@ -54,9 +60,13 @@ public enum ClaudeEvent: Sendable {
         public var attempt: Int?
         public var maxRetries: Int?
         public var retryDelayMS: Int?
-        /// `rate_limit`, `overloaded`, `billing_error`, … drives queue policy.
+        /// `rate_limit`, `overloaded`, `billing_error`, `authentication_failed`,
+        /// … drives queue policy.
         public var errorCategory: String?
         public var raw: JSONValue
+        /// HTTP status behind the retry when the CLI reports one (401 for a
+        /// rejected key).
+        public var errorStatus: Int? = nil
     }
 
     public struct AssistantMessage: Sendable {
@@ -72,6 +82,11 @@ public enum ClaudeEvent: Sendable {
         public var parentToolUseID: String?
         public var usage: JSONValue?
         public var raw: JSONValue
+        /// Set when this "message" is really a failed API call the CLI
+        /// rendered as assistant text — e.g. `authentication_failed` for an
+        /// expired login. Not model output.
+        public var error: String? = nil
+        public var isAPIErrorMessage: Bool = false
     }
 
     public struct TurnResult: Sendable {
@@ -118,7 +133,8 @@ public enum ClaudeEventDecoder {
                     maxRetries: value["max_retries"]?.numberValue.map(Int.init),
                     retryDelayMS: value["retry_delay_ms"]?.numberValue.map(Int.init),
                     errorCategory: value["error"]?.stringValue,
-                    raw: value))
+                    raw: value,
+                    errorStatus: value["error_status"]?.numberValue.map(Int.init)))
             default:
                 return .system(subtype: subtype, raw: value)
             }
@@ -145,7 +161,9 @@ public enum ClaudeEventDecoder {
                 model: message?["model"]?.stringValue,
                 parentToolUseID: value["parent_tool_use_id"]?.stringValue,
                 usage: message?["usage"],
-                raw: value))
+                raw: value,
+                error: value["error"]?.stringValue,
+                isAPIErrorMessage: value["is_api_error_message"]?.boolValue ?? false))
         case "user":
             return .user(raw: value)
         case "stream_event":

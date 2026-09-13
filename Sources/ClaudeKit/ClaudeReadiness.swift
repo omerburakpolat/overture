@@ -126,17 +126,23 @@ public struct ClaudeReadiness: Sendable, Equatable {
     /// Which credential the app's own spawns will actually use.
     public var effectiveCredential: CredentialPrecedence.Resolution?
     public var shellDivergence: ShellEnvironmentProbe.Finding?
+    /// Who is signed in underneath an environment credential, when one is
+    /// present — so Settings can name the login that isn't being used. Nil
+    /// when no override is set (no second probe runs).
+    public var storedLogin: ClaudeAccount?
     public var checkedAt: Date
 
     public init(cli: CLIStatus,
                 auth: AuthState,
                 effectiveCredential: CredentialPrecedence.Resolution? = nil,
                 shellDivergence: ShellEnvironmentProbe.Finding? = nil,
+                storedLogin: ClaudeAccount? = nil,
                 checkedAt: Date) {
         self.cli = cli
         self.auth = auth
         self.effectiveCredential = effectiveCredential
         self.shellDivergence = shellDivergence
+        self.storedLogin = storedLogin
         self.checkedAt = checkedAt
     }
 
@@ -187,6 +193,12 @@ public struct ClaudeReadiness: Sendable, Equatable {
                     + credential.evidence.map(\.rawValue).joined(separator: ", "))
             }
             lines.append("overridesReportedLogin: \(credential.overridesReportedLogin)")
+        }
+        if let storedLogin {
+            // Method only — never the email or organisation.
+            lines.append("storedLogin: "
+                + (storedLogin.loggedIn ? "signed in" : "signed out")
+                + " (\(storedLogin.authMethod.rawValue))")
         }
         if let divergence = shellDivergence, divergence.hasDivergence {
             lines.append("shellOnlyVariables: "
