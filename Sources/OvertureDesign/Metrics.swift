@@ -141,6 +141,8 @@ public extension DS {
         /// Inline plan preview / expanded tool output cap before inner scroll.
         public static let planPreviewMaxHeight: CGFloat = 240
         public static let consoleHeight: CGFloat = 120
+        /// App icon in the first-run header — the setup-assistant size.
+        public static let welcomeIconSize: CGFloat = 96
         public static let menuMinWidth: CGFloat = 260
         public static let tileMaxWidth: CGFloat = 380
         /// User bubbles sit at ≤75% of the transcript measure (§7).

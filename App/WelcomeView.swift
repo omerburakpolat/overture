@@ -55,12 +55,13 @@ struct WelcomeView: View {
     /// belongs here — in one sentence.
     private var header: some View {
         VStack(spacing: DS.Space.s300) {
-            Image(systemName: DS.Icon.sparkles)
-                .font(DS.TypeStyle.screenTitle)
-                .foregroundStyle(DS.Color.Text.onAccent)
-                .frame(width: DS.Space.s1600, height: DS.Space.s1600)
-                .background(DS.Color.Accent.fill,
-                            in: RoundedRectangle(cornerRadius: DS.Radius.panel))
+            // The app's own icon, exactly as the Dock shows it — the bundle
+            // ships it, so nothing to add to the design system.
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: DS.Layout.welcomeIconSize,
+                       height: DS.Layout.welcomeIconSize)
                 .accessibilityHidden(true)
             Text("Welcome to Overture")
                 .font(DS.TypeStyle.screenTitle)
