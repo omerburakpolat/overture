@@ -69,6 +69,12 @@ public extension DS {
         public static let key = "key"
         public static let signOut = "rectangle.portrait.and.arrow.right"
         public static let policy = "building.2"
+        /// Requirement-list states (first run, Settings). Filled variants so
+        /// the shape reads at caption size; state is always also in the text.
+        public static let statusPass = "checkmark.circle.fill"
+        public static let statusAttention = "exclamationmark.circle.fill"
+        public static let statusBlocked = "xmark.circle.fill"
+        public static let statusPending = "circle.dotted"
         public static let terminal = "terminal"
         public static let chat = "text.bubble"
         public static let diff = "plus.forwardslash.minus"

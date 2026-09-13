@@ -12,8 +12,11 @@
 # stale build and believing it is your change. This always runs the one it
 # just built, and says so.
 #
-# SYMROOT is forced local because machine-global Xcode build-location settings
-# otherwise redirect the products somewhere unrelated.
+# SYMROOT and OBJROOT are forced local because a machine-global Xcode
+# build-location setting ("Custom" products path) otherwise redirects both.
+# Forcing only SYMROOT is not enough: with intermediates shared across every
+# checkout, a worktree's "fresh" product was once a week-old binary while
+# xcodebuild reported success.
 set -euo pipefail
 CONFIG="${1:-Debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,6 +27,7 @@ echo "Building $CONFIG…"
 xcodebuild -project "$ROOT/Overture.xcodeproj" -scheme Overture \
   -configuration "$CONFIG" -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$BUILD/DerivedData" SYMROOT="$BUILD/Products" \
+  OBJROOT="$BUILD/Intermediates" \
   build | tail -2
 
 [ -d "$APP" ] || { echo "Expected app at $APP" >&2; exit 1; }
